@@ -1,11 +1,14 @@
-
+import { preferences } from 'mercadopago';
 import express, { Router, Request, Response } from 'express';
-import ProductoModel from '../models/products-model';
 import colors from "colors"
+
+import ProductoModel from '../models/products-model';
+
 const router = Router();
 
 interface Producto {
-    id: number;
+    _id : string,
+    id: string;
     name: string;
     price: number;
     image?: string; // El ? hace que "image" sea opcional
@@ -14,30 +17,73 @@ interface Producto {
     cantidad: number;
   }
 
-  router.post('/pay', async (req: Request, res: Response) => {
-    const body = req.body
-    console.log(colors.bgBlue(body))
-    let ids = body[1]
   
-    // Leer archivos de la BD -
-    const registros : Producto[] = await ProductoModel.find().lean()
-    // console.log(colors.bgGreen(registros))
-    if(registros) {
-      // Preferencias - Para mandar el producto por MP
-      let preference = {
-        items: [],
-        back_urls: {
-          success: 'http://localhost:3000/feedback',
-          failure: 'http://localhost:3000/feedback',
-          pending: 'http://localhost:3000/feedback',
-        },
-        auto_return: 'approved',
-      }
+  router.post('/pay', async (req: Request, res: Response) => {
+    const body = req.body;
+    const ids = body[1];
+    console.log(colors.bgBlue(ids));
+  
     
-      console.log(`Esto es el ids ${ids}`)
-    }
-   
-    res.status(200).json({"mensaje" : "hola"})
+
+    // Leer archivos de la BD -
+    const registros = await ProductoModel.find().lean();
+  
+    // Preferencias - Para mandar el producto por MP
+    let preference: any = {
+      items: [],
+      back_urls: {
+        success: 'http://localhost:3000/feedback',
+        failure: 'http://localhost:3000/feedback',
+        pending: 'http://localhost:3000/feedback',
+      },
+      auto_return: 'approved',
+    };
+  
+    console.log(`Esto es el ids ${ids}`);
+  
+    ids.forEach((id: { id: number; cantidad: number }) => {
+      //console.log(colors.bgGreen(id.cantidad.toString()));
+
+  
+      const productAct = registros.find((p: any) => p.id === id.id);
+      //console.log(colors.bgRed(productAct));
+      if (productAct) {
+        productAct.cantidad = id.cantidad;
+  
+        // Agregar la preferencia de MP
+        preference.items.push({
+          title: productAct.name,
+          unit_price: productAct.price,
+          quantity: productAct.cantidad,
+        });
+  
+        const idMongo = productAct._id.valueOf();
+  
+        const actualizarStock = async () => {
+          try {
+            productAct.cantidad = 0;
+            await ProductoModel.findByIdAndUpdate(idMongo, productAct);
+            console.log('Producto actualizado!');
+          } catch (err) {
+            console.error('Error al buscar el producto:', err);
+          }
+        };
+  
+        actualizarStock();
+      }
+    });
+  
+    const preferenciasMercadoPago = async () => {
+      // LLamar a mercado pago y mandarle las preferencias
+      const response = await preferences.create(preference);
+      console.log(response.body.id);
+      const preferenceId = response.body.id;
+  
+      res.send({ preferenceId });
+    };
+
+    preferenciasMercadoPago();
+ 
   })
   
 
