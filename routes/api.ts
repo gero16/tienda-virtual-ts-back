@@ -20,16 +20,14 @@ interface Producto {
   
   router.post('/pay', async (req: Request, res: Response) => {
     const body = req.body;
-    const ids = body[1];
-    console.log(colors.bgBlue(ids));
+    const infoProductos = body[1];
+    console.log(colors.bgBlue(infoProductos));
   
-    
-
     // Leer archivos de la BD -
     const registros = await ProductoModel.find().lean();
   
     // Preferencias - Para mandar el producto por MP
-    let preference: any = {
+    let preferencia: any = {
       items: [],
       back_urls: {
         success: 'http://localhost:3000/feedback',
@@ -38,20 +36,16 @@ interface Producto {
       },
       auto_return: 'approved',
     };
-  
-    console.log(`Esto es el ids ${ids}`);
-  
-    ids.forEach((id: { id: number; cantidad: number }) => {
+    
+    infoProductos.forEach((productoInfo: { id: number; cantidad: number }) => {
       //console.log(colors.bgGreen(id.cantidad.toString()));
-
-  
-      const productAct = registros.find((p: any) => p.id === id.id);
+      const productAct = registros.find((p: any) => p.id === productoInfo.id);
       //console.log(colors.bgRed(productAct));
       if (productAct) {
-        productAct.cantidad = id.cantidad;
+        productAct.cantidad = productoInfo.cantidad;
   
         // Agregar la preferencia de MP
-        preference.items.push({
+        preferencia.items.push({
           title: productAct.name,
           unit_price: productAct.price,
           quantity: productAct.cantidad,
@@ -75,7 +69,7 @@ interface Producto {
   
     const preferenciasMercadoPago = async () => {
       // LLamar a mercado pago y mandarle las preferencias
-      const response = await preferences.create(preference);
+      const response = await preferences.create(preferencia);
       console.log(response.body.id);
       const preferenceId = response.body.id;
   
