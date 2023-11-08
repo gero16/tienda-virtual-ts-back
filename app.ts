@@ -12,6 +12,14 @@ const port = 3000;
 app.use(bodyParser.json())
 app.use(cors())
 
+import mercadopago from 'mercadopago';
+// Agrega credenciales
+mercadopago.configure({
+  access_token:
+    'TEST-3488859500794386-010715-320f2dd75257891352172318a1ed84fd-370206533',
+})
+
+
 app.use('/api', routes);
 
 

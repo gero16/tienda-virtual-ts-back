@@ -17,17 +17,31 @@ interface Producto {
     cantidad: number;
   }
 
-  
+  interface Preferencia {
+    items: {
+      title: string;
+      unit_price: number;
+      quantity: number;
+    }[]
+    back_urls: {
+      success: string;
+      failure: string;
+      pending: string;
+    },
+    // No tengo claro porque cuando era string me tiraba un error
+    auto_return: any,
+  }
+
   router.post('/pay', async (req: Request, res: Response) => {
     const body = req.body;
     const infoProductos = body[1];
-    console.log(colors.bgBlue(infoProductos));
+    //console.log(colors.bgBlue(infoProductos));
   
     // Leer archivos de la BD -
     const registros = await ProductoModel.find().lean();
   
     // Preferencias - Para mandar el producto por MP
-    let preferencia: any = {
+    let preferencia: Preferencia  = {
       items: [],
       back_urls: {
         success: 'http://localhost:3000/feedback',
@@ -37,10 +51,11 @@ interface Producto {
       auto_return: 'approved',
     };
     
-    infoProductos.forEach((productoInfo: { id: number; cantidad: number }) => {
-      //console.log(colors.bgGreen(id.cantidad.toString()));
-      const productAct = registros.find((p: any) => p.id === productoInfo.id);
-      //console.log(colors.bgRed(productAct));
+    infoProductos.forEach((productoInfo : { id: number, cantidad: number }) => {
+      console.log(productoInfo)
+      
+      const productAct = registros.find((p) => p.id === productoInfo.id);
+      console.log(productAct)
       if (productAct) {
         productAct.cantidad = productoInfo.cantidad;
   
@@ -50,11 +65,14 @@ interface Producto {
           unit_price: productAct.price,
           quantity: productAct.cantidad,
         });
+
+        console.log(preferencia)
   
         const idMongo = productAct._id.valueOf();
   
         const actualizarStock = async () => {
           try {
+            // 
             productAct.cantidad = 0;
             await ProductoModel.findByIdAndUpdate(idMongo, productAct);
             console.log('Producto actualizado!');
@@ -69,15 +87,20 @@ interface Producto {
   
     const preferenciasMercadoPago = async () => {
       // LLamar a mercado pago y mandarle las preferencias
-      const response = await preferences.create(preferencia);
-      console.log(response.body.id);
-      const preferenceId = response.body.id;
-  
-      res.send({ preferenceId });
+      try {
+        const response = await preferences.create(preferencia);
+        console.log(response.body.id);
+        const preferenceId = response.body.id;
+    
+        res.status(200).send({ preferenceId });
+      } catch (error) {
+        res.status(404).send({ error });
+        console.log(error)
+      }
     };
 
     preferenciasMercadoPago();
- 
+
   })
   
 
