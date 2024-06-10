@@ -38,7 +38,7 @@ interface Producto {
     //console.log(colors.bgBlue(infoProductos));
   
     // Leer archivos de la BD -
-    const registros = await ProductoModel.find().lean();
+    const registros:  Producto[] = await ProductoModel.find().lean();
   
     // Preferencias - Para mandar el producto por MP
     let preferencia: Preferencia  = {
@@ -118,7 +118,7 @@ router.get('/productos', async (req: Request, res: Response) => {
         return 0;
       });
 
-      let msg :string = 'Registros Encontrados'
+      let msg : string = 'Registros Encontrados'
   
       if (!registros.length) msg = 'No existen registros'
       console.log(colors.bgRed(JSON.stringify(registrosOrdenados)))
