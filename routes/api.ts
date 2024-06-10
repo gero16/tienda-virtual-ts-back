@@ -51,10 +51,10 @@ interface Producto {
       auto_return: 'approved',
     };
     
-    infoProductos.forEach((productoInfo : { id: number, cantidad: number }) => {
+    infoProductos.forEach((productoInfo : { id: string, cantidad: number }) => {
       console.log(productoInfo)
       
-      const productAct = registros.find((p) => p.id === productoInfo.id);
+      const productAct = registros.find((p : Producto) => p.id === productoInfo.id);
       console.log(productAct)
       if (productAct) {
         productAct.cantidad = productoInfo.cantidad;
