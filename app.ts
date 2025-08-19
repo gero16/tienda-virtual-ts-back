@@ -21,6 +21,9 @@ mercadopago.configure({
 
 
 app.use('/api', routes);
+app.get('/', (req: Request, res: Response) => {
+  res.send('Ruta funcionando!');
+});
 
 
 const dbConnection = async () : Promise <void> => {
