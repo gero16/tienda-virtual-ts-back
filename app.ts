@@ -1,10 +1,12 @@
 import 'dotenv/config'
 import express, {Express, Router, Request, Response } from 'express';
 import cors from "cors";
-import routes from './routes/api'; 
 import mongoose from 'mongoose';
 import bodyParser from "body-parser"
 import colors from "colors"
+
+import routes from './routes/api'; 
+import mercadolibre from './routes/mercadolibre'; 
 
 const app : Express = express();
 const port = 3000;
@@ -21,6 +23,7 @@ mercadopago.configure({
 
 
 app.use('/api', routes);
+app.use('/ml', mercadolibre);
 app.get('/', (req: Request, res: Response) => {
   res.send('Ruta funcionando!');
 });
