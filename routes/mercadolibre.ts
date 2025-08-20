@@ -4,6 +4,9 @@ import Token from "../models/Token";
 import Notificacion from "../models/Notificacion";
 import Producto from "../models/Producto";
 import cron from "node-cron";
+import { Types } from "mongoose";
+import Variante from "../models/Variante";
+
 
 const router = Router();
 
@@ -38,7 +41,11 @@ async function processNotification({ resource, topic, _id, accessToken }: Notifi
         console.log(`⚠️ Topic no manejado: ${topic}`);
     }
 
-    await Notificacion.updateOne({ notification_id: _id }, { processed: true });
+    await Notificacion.findOneAndUpdate(
+      { notification_id: _id },
+      { $set: { processed: true } }
+    );
+
   } catch (error: any) {
     await Notificacion.updateOne({ notification_id: _id }, { error: error.message });
     throw error;
@@ -141,6 +148,8 @@ async function refreshToken(oldToken: any) {
       expires_in: response.data.expires_in,
       user_id: response.data.user_id,
       scope: response.data.scope,
+      last_updated: new Date(),
+
     });
 
     await newToken.save();
@@ -257,11 +266,80 @@ router.get("/status", async (req: Request, res: Response) => {
   }
 });
 
+async function forceUpdateProductos() {
+  const token = await getCurrentToken();
+  if (!token) throw new Error("No autenticado");
+
+  const itemsResponse = await axios.get(
+    `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
+    { headers: { Authorization: `Bearer ${token.access_token}` } }
+  );
+
+  for (const itemId of itemsResponse.data.results) {
+    const { data: itemDetail } = await axios.get(
+      `https://api.mercadolibre.com/items/${itemId}`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+
+    // --- Producto ---
+    let producto = await Producto.findOneAndUpdate(
+      { ml_id: itemDetail.id },
+      {
+        ml_id: itemDetail.id,
+        title: itemDetail.title,
+        price: itemDetail.price,
+        available_quantity: itemDetail.available_quantity,
+        status: itemDetail.status,
+        main_image: itemDetail.thumbnail,
+      },
+      { upsert: true, new: true }
+    );
+
+    // --- Variantes ---
+    if (itemDetail.variations?.length > 0 && producto) {
+      const varianteIds: string[] = [];
+
+      for (const variante of itemDetail.variations) {
+        const color = variante.attribute_combinations.find(
+          (a: any) => a.id === "COLOR"
+        )?.value_name || null;
+
+        const size = variante.attribute_combinations.find(
+          (a: any) => a.id === "SIZE"
+        )?.value_name || null;
+
+        const savedVariante = await Variante.findOneAndUpdate(
+          { id: variante.id.toString() },
+          {
+            id: variante.id.toString(),
+            product_id: producto._id, // referencia al producto
+            color,
+            size,
+            stock: variante.available_quantity,
+            image: variante.picture_ids?.[0]
+              ? `https://http2.mlstatic.com/D_${variante.picture_ids[0]}-O.jpg`
+              : null,
+          },
+          { upsert: true, new: true }
+        );
+
+        if (savedVariante) {
+          varianteIds.push(savedVariante._id.toString());
+        }
+      }
+
+      // actualizar el producto con las variantes
+      producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
+      await producto.save();
+    }
+  }
+}
+
 // -------------------- CRON --------------------
 cron.schedule("0 */3 * * *", async () => {
   try {
-    console.log("⏰ Ejecutando sincronización automática con Mercado Libre...");
-    // ⚡️ acá llamás tu `forceUpdateProductos()` adaptado con Mongoose
+    console.log("⏰ Ejecutando sincronización automática con Mercado Libre... ⚡️");
+    await forceUpdateProductos()
   } catch (err: any) {
     console.error("❌ Error en sincronización automática:", err.message);
   }
