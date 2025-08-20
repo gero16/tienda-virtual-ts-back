@@ -338,6 +338,17 @@ async function forceUpdateProductos() {
   }
 }
 
+router.get("/productos", async (req: Request, res: Response) => {
+  try {
+    // Traer todos los productos y hacer populate de variantes
+    const productos = await Producto.find().populate("variantes");
+
+    res.json(productos);
+  } catch (err: any) {
+    res.status(500).send("❌ Error al obtener productos: " + err.message);
+  }
+});
+
 router.get("/sync/force", async (req: Request, res: Response) => {
   try {
     await forceUpdateProductos();
