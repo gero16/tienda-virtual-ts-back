@@ -10,7 +10,7 @@ export interface IVariante extends Document {
 }
 
 const VarianteSchema = new Schema<IVariante>({
-  id: { type: String, required: true, unique: true },
+  id: { type: String, required: true, unique: true }, // OK
   product_id: { type: Schema.Types.ObjectId, ref: "Producto", required: true },
   color: { type: String, default: null },
   size: { type: String, default: null },

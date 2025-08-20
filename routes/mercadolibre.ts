@@ -297,41 +297,44 @@ async function forceUpdateProductos() {
 
     // --- Variantes ---
     if (itemDetail.variations?.length > 0 && producto) {
-      const varianteIds: string[] = [];
+  const varianteIds: string[] = [];
 
-      for (const variante of itemDetail.variations) {
-        const color = variante.attribute_combinations.find(
-          (a: any) => a.id === "COLOR"
-        )?.value_name || null;
+  for (const variante of itemDetail.variations) {
+    // 👇 NUEVO: evitar variantes sin id
+    if (!variante.id) continue;
 
-        const size = variante.attribute_combinations.find(
-          (a: any) => a.id === "SIZE"
-        )?.value_name || null;
+    const color = variante.attribute_combinations.find(
+      (a: any) => a.id === "COLOR"
+    )?.value_name || null;
 
-        const savedVariante = await Variante.findOneAndUpdate(
-          { id: variante.id.toString() },
-          {
-            id: variante.id.toString(),
-            product_id: producto._id, // referencia al producto
-            color,
-            size,
-            stock: variante.available_quantity,
-            image: variante.picture_ids?.[0]
-              ? `https://http2.mlstatic.com/D_${variante.picture_ids[0]}-O.jpg`
-              : null,
-          },
-          { upsert: true, new: true }
-        );
+    const size = variante.attribute_combinations.find(
+      (a: any) => a.id === "SIZE"
+    )?.value_name || null;
 
-        if (savedVariante) {
-          varianteIds.push(savedVariante._id.toString());
-        }
-      }
+    const savedVariante = await Variante.findOneAndUpdate(
+      { id: variante.id.toString() },
+      {
+        id: variante.id.toString(),
+        product_id: producto._id,
+        color,
+        size,
+        stock: variante.available_quantity,
+        image: variante.picture_ids?.[0]
+          ? `https://http2.mlstatic.com/D_${variante.picture_ids[0]}-O.jpg`
+          : null,
+      },
+      { upsert: true, new: true }
+    );
 
-      // actualizar el producto con las variantes
-      producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
-      await producto.save();
+    if (savedVariante) {
+      varianteIds.push(savedVariante._id.toString());
     }
+  }
+
+  producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
+  await producto.save();
+}
+
   }
 }
 
