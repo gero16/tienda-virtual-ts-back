@@ -1,0 +1,228 @@
+[{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bae"
+  },
+  "id": 1,
+  "name": "Remera Pav",
+  "price": 850,
+  "image": "img/remera.webp",
+  "category": "remeras",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965baf"
+  },
+  "id": 2,
+  "name": "Remera Savana",
+  "price": 1950,
+  "image": "img/remera2.webp",
+  "category": "remeras",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb0"
+  },
+  "id": 3,
+  "name": "Remera Calafate ",
+  "price": 250,
+  "image": "img/remera3.webp",
+  "category": "carteras",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb4"
+  },
+  "id": 7,
+  "name": "Mochila Tulum",
+  "price": 550,
+  "image": "img/mochila3.jpg",
+  "category": "mochilas",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb6"
+  },
+  "id": 9,
+  "name": "´Short Calvin",
+  "price": 2350,
+  "image": "img/short.webp",
+  "category": "bermudas",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb7"
+  },
+  "id": 10,
+  "name": "Short Liso",
+  "price": 790,
+  "image": "img/short2.webp",
+  "category": "bermudas",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb9"
+  },
+  "id": 12,
+  "name": "Pantalon Mykonos",
+  "price": 1950,
+  "image": "img/pantalon2.webp",
+  "category": "pantalones",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bbe"
+  },
+  "id": 17,
+  "name": "Champion Linder",
+  "price": 1950,
+  "image": "img/champion2.webp",
+  "category": "championes",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb5"
+  },
+  "id": 8,
+  "name": "Mochila Tundra",
+  "price": 550,
+  "image": "img/mochila4.jpg",
+  "category": "mochilas",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb8"
+  },
+  "id": 11,
+  "name": "Pantalon Andes",
+  "price": 2350,
+  "image": "img/pantalon.webp",
+  "category": "pantalones",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bba"
+  },
+  "id": 13,
+  "name": "Medias Clasicas",
+  "price": 1950,
+  "image": "img/medias.webp",
+  "category": "medias",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb3"
+  },
+  "id": 6,
+  "name": "Mochila Andes",
+  "price": 2350,
+  "image": "img/mochila2.jpg",
+  "category": "mochilas",
+  "stock": 0,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bbc"
+  },
+  "id": 15,
+  "name": "Gorro",
+  "price": 1950,
+  "image": "img/gorro.webp",
+  "category": "gorros",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bc0"
+  },
+  "id": 19,
+  "name": "Pantalon Mykonos",
+  "price": 1950,
+  "image": "img/champion4.webp",
+  "category": "championes",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb1"
+  },
+  "id": 4,
+  "name": "Remera under",
+  "price": 3500,
+  "image": "img/remera4.webp",
+  "category": "remeras",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bb2"
+  },
+  "id": 5,
+  "name": "Mochila oxido",
+  "price": 3500,
+  "image": "img/mochila.webp",
+  "category": "mochilas",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bbb"
+  },
+  "id": 14,
+  "name": "Medias",
+  "price": 1950,
+  "image": "img/medias2.jpg",
+  "category": "medias2",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bbd"
+  },
+  "id": 16,
+  "name": "Champion Loset",
+  "price": 1950,
+  "image": "img/champion.jpg",
+  "category": "championes",
+  "stock": 1000,
+  "cantidad": 0
+},
+{
+  "_id": {
+    "$oid": "66870e03792c985dfc965bbf"
+  },
+  "id": 18,
+  "name": "Champion Mike",
+  "price": 1950,
+  "image": "img/champion3.webp",
+  "category": "championes",
+  "stock": 1000,
+  "cantidad": 0
+}]

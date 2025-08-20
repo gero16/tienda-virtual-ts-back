@@ -34,6 +34,6 @@ ProductosSchema.methods.toJSON = function () {
   return this.toObject();
 };
 
-const ProductoModel = model('Producto', ProductosSchema);
+const ProductoModel = model('ProductoLocal', ProductosSchema);
 
 export default ProductoModel;
