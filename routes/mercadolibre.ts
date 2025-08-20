@@ -358,6 +358,15 @@ router.get("/sync/force", async (req: Request, res: Response) => {
   }
 });
 
+
+app.get('/productos/:id', async (req, res) => {
+    try {
+        const producto = await Producto.findById(req.params.id).populate('variantes');
+        res.json(producto);
+    } catch (error) {
+        res.status(500).json({ error: 'Error al obtener el producto' });
+    }
+});
 // -------------------- CRON --------------------
 cron.schedule("0 */3 * * *", async () => {
   try {
