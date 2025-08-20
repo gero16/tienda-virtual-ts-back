@@ -7,7 +7,6 @@ import cron from "node-cron";
 import { Types } from "mongoose";
 import Variante from "../models/Variante";
 
-
 const router = Router();
 
 const ML_CONFIG = {
@@ -16,7 +15,6 @@ const ML_CONFIG = {
   redirect_uri: process.env.ML_REDIRECT_URI as string,
 };
 
-
 // -------------------- HANDLERS --------------------
 interface NotificationParams {
   resource: string;
@@ -24,7 +22,7 @@ interface NotificationParams {
   _id: string;
   accessToken: string;
 }
-// -------------------- HANDLERS --------------------
+
 async function processNotification({ resource, topic, _id, accessToken }: NotificationParams) {
   try {
     switch (topic) {
@@ -86,6 +84,17 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
+  // Obtener descripción por separado
+  let description = "";
+  try {
+    const descResponse = await axios.get(`https://api.mercadolibre.com/items/${item.id}/description`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    description = descResponse.data.plain_text || "";
+  } catch (error) {
+    console.log("⚠️ No se pudo obtener la descripción para:", item.id);
+  }
+
   await Producto.updateOne(
     { ml_id: item.id },
     {
@@ -94,12 +103,39 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       price: item.price,
       available_quantity: item.available_quantity,
       status: item.status,
-      main_image: item.pictures?.[0]?.url || null,
+      // Imágenes en mejor calidad
+      images: item.pictures?.map((picture: any) => ({
+        id: picture.id,
+        url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
+        max_size: picture.max_size
+      })) || [],
+      // Información adicional
+      description: description,
+      sold_quantity: item.sold_quantity || 0,
+      warranty: item.warranty || "",
+      attributes: item.attributes || [],
+      tags: item.tags || [],
+      category_id: item.category_id || "",
+      condition: item.condition || "",
+      listing_type_id: item.listing_type_id || "",
+      shipping: item.shipping || {},
+      health: item.health || 0,
+      // Métricas
+      metrics: {
+        visits: item.visits || 0,
+        reviews: {
+          rating_average: item.reviews?.rating_average || 0,
+          total: item.reviews?.total || 0
+        }
+      },
+      // Fechas importantes
+      date_created: item.date_created ? new Date(item.date_created) : new Date(),
+      last_updated: item.last_updated ? new Date(item.last_updated) : new Date()
     },
     { upsert: true }
   );
 
-  console.log(`✅ Item ${item.id} actualizado en DB`);
+  console.log(`✅ Item ${item.id} actualizado en DB con información completa`);
 }
 
 async function handleOrderNotification(resourceUrl: string, accessToken: string) {
@@ -111,7 +147,6 @@ async function handleOrderNotification(resourceUrl: string, accessToken: string)
   console.log(`🛒 Pedido recibido: ${order.id}`);
   // ⚡️ Aquí podrías guardarlo en la DB si querés
 }
-
 
 // -------------------- TOKEN --------------------
 async function getCurrentToken() {
@@ -149,7 +184,6 @@ async function refreshToken(oldToken: any) {
       user_id: response.data.user_id,
       scope: response.data.scope,
       last_updated: new Date(),
-
     });
 
     await newToken.save();
@@ -276,73 +310,126 @@ async function forceUpdateProductos() {
   );
 
   for (const itemId of itemsResponse.data.results) {
-    const { data: itemDetail } = await axios.get(
-      `https://api.mercadolibre.com/items/${itemId}`,
-      { headers: { Authorization: `Bearer ${token.access_token}` } }
-    );
+    try {
+      const { data: itemDetail } = await axios.get(
+        `https://api.mercadolibre.com/items/${itemId}`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
 
-    // --- Producto ---
-    let producto = await Producto.findOneAndUpdate(
-      { ml_id: itemDetail.id },
-      {
-        ml_id: itemDetail.id,
-        title: itemDetail.title,
-        price: itemDetail.price,
-        available_quantity: itemDetail.available_quantity,
-        status: itemDetail.status,
-        main_image: itemDetail.thumbnail,
-      },
-      { upsert: true, new: true }
-    );
+      // Obtener descripción por separado
+      let description = "";
+      try {
+        const descResponse = await axios.get(
+          `https://api.mercadolibre.com/items/${itemId}/description`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        description = descResponse.data.plain_text || "";
+      } catch (error) {
+        console.log("⚠️ No se pudo obtener la descripción para:", itemId);
+      }
 
-    // --- Variantes ---
-    if (itemDetail.variations?.length > 0 && producto) {
-  const varianteIds: string[] = [];
+      // --- Producto ---
+      let producto = await Producto.findOneAndUpdate(
+        { ml_id: itemDetail.id },
+        {
+          ml_id: itemDetail.id,
+          title: itemDetail.title,
+          price: itemDetail.price,
+          available_quantity: itemDetail.available_quantity,
+          status: itemDetail.status,
+          // Imágenes en mejor calidad
+          images: itemDetail.pictures?.map((picture: any) => ({
+            id: picture.id,
+            url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
+            max_size: picture.max_size
+          })) || [],
+          // Información adicional
+          description: description,
+          sold_quantity: itemDetail.sold_quantity || 0,
+          warranty: itemDetail.warranty || "",
+          attributes: itemDetail.attributes || [],
+          tags: itemDetail.tags || [],
+          category_id: itemDetail.category_id || "",
+          condition: itemDetail.condition || "",
+          listing_type_id: itemDetail.listing_type_id || "",
+          shipping: itemDetail.shipping || {},
+          health: itemDetail.health || 0,
+          // Métricas
+          metrics: {
+            visits: itemDetail.visits || 0,
+            reviews: {
+              rating_average: itemDetail.reviews?.rating_average || 0,
+              total: itemDetail.reviews?.total || 0
+            }
+          },
+          // Fechas importantes
+          date_created: itemDetail.date_created ? new Date(itemDetail.date_created) : new Date(),
+          last_updated: itemDetail.last_updated ? new Date(itemDetail.last_updated) : new Date()
+        },
+        { upsert: true, new: true }
+      );
 
-  for (const variante of itemDetail.variations) {
-    // 👇 NUEVO: evitar variantes sin id
-    if (!variante.id) continue;
+      // --- Variantes ---
+      if (itemDetail.variations?.length > 0 && producto) {
+        const varianteIds: string[] = [];
 
-    const color = variante.attribute_combinations.find(
-      (a: any) => a.id === "COLOR"
-    )?.value_name || null;
+        for (const variante of itemDetail.variations) {
+          if (!variante.id) continue;
 
-    const size = variante.attribute_combinations.find(
-      (a: any) => a.id === "SIZE"
-    )?.value_name || null;
+          const color = variante.attribute_combinations.find(
+            (a: any) => a.id === "COLOR"
+          )?.value_name || null;
 
-    const savedVariante = await Variante.findOneAndUpdate(
-      { id: variante.id.toString() },
-      {
-        id: variante.id.toString(),
-        product_id: producto._id,
-        color,
-        size,
-        stock: variante.available_quantity,
-        image: variante.picture_ids?.[0]
-          ? `https://http2.mlstatic.com/D_${variante.picture_ids[0]}-O.jpg`
-          : null,
-      },
-      { upsert: true, new: true }
-    );
+          const size = variante.attribute_combinations.find(
+            (a: any) => a.id === "SIZE"
+          )?.value_name || null;
 
-    if (savedVariante) {
-      varianteIds.push(savedVariante._id.toString());
+          const savedVariante = await Variante.findOneAndUpdate(
+            { id: variante.id.toString() },
+            {
+              id: variante.id.toString(),
+              product_id: producto._id,
+              color,
+              size,
+              stock: variante.available_quantity,
+              price: variante.price || itemDetail.price,
+              images: variante.picture_ids?.map((id: string) => ({
+                id: id,
+                url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
+                high_quality: `https://http2.mlstatic.com/D_${id}-O.jpg`
+              })) || [],
+              attribute_combinations: variante.attribute_combinations?.map((attr: any) => ({
+                id: attr.id,
+                name: attr.name,
+                value_id: attr.value_id,
+                value_name: attr.value_name
+              })) || []
+            },
+            { upsert: true, new: true }
+          );
+
+          if (savedVariante) {
+            varianteIds.push(savedVariante._id.toString());
+          }
+        }
+
+        producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
+        await producto.save();
+      }
+
+      console.log(`✅ Producto ${itemId} sincronizado correctamente`);
+      
+      // Pequeña pausa para no saturar la API
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } catch (error) {
+      console.error(`❌ Error procesando producto ${itemId}:`, error);
     }
-  }
-
-  producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
-  await producto.save();
-}
-
   }
 }
 
 router.get("/productos", async (req: Request, res: Response) => {
   try {
-    // Traer todos los productos y hacer populate de variantes
     const productos = await Producto.find().populate("variantes");
-
     res.json(productos);
   } catch (err: any) {
     res.status(500).send("❌ Error al obtener productos: " + err.message);
@@ -358,20 +445,20 @@ router.get("/sync/force", async (req: Request, res: Response) => {
   }
 });
 
-
 router.get('/productos/:id', async (req: Request, res: Response)  => {
-    try {
-        const producto = await Producto.findById(req.params.id).populate('variantes');
-        res.json(producto);
-    } catch (error) {
-        res.status(500).json({ error: 'Error al obtener el producto' });
-    }
+  try {
+    const producto = await Producto.findById(req.params.id).populate('variantes');
+    res.json(producto);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener el producto' });
+  }
 });
+
 // -------------------- CRON --------------------
 cron.schedule("0 */3 * * *", async () => {
   try {
     console.log("⏰ Ejecutando sincronización automática con Mercado Libre... ⚡️");
-    await forceUpdateProductos()
+    await forceUpdateProductos();
   } catch (err: any) {
     console.error("❌ Error en sincronización automática:", err.message);
   }
