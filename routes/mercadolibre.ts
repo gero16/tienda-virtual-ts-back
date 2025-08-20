@@ -359,7 +359,7 @@ router.get("/sync/force", async (req: Request, res: Response) => {
 });
 
 
-app.get('/productos/:id', async (req, res) => {
+router.get('/productos/:id', async (req: Request, res: Response)  => {
     try {
         const producto = await Producto.findById(req.params.id).populate('variantes');
         res.json(producto);
