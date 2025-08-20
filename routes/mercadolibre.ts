@@ -335,6 +335,15 @@ async function forceUpdateProductos() {
   }
 }
 
+router.get("/sync/force", async (req: Request, res: Response) => {
+  try {
+    await forceUpdateProductos();
+    res.send("✅ Sincronización forzada completada");
+  } catch (err: any) {
+    res.status(500).send("❌ Error en sincronización: " + err.message);
+  }
+});
+
 // -------------------- CRON --------------------
 cron.schedule("0 */3 * * *", async () => {
   try {
