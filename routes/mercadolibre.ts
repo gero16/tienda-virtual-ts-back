@@ -139,14 +139,31 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
 }
 
 async function handleOrderNotification(resourceUrl: string, accessToken: string) {
-  const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
-  const { data: order } = await axios.get(fullUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  try {
+    const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
+    const { data: order } = await axios.get(fullUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
-  console.log(`🛒 Pedido recibido: ${order.id}`);
-  // ⚡️ Aquí podrías guardarlo en la DB si querés
+    console.log(`🛒 Pedido recibido: ${order.id}`);
+
+    // (1) Guardar la orden en DB si tenés un modelo "Order"
+    // await new Order(order).save();
+
+    // (2) Identificar qué producto se vendió
+    for (const item of order.order_items) {
+      const itemId = item.item.id; // ID del producto en ML
+
+      console.log(`📦 Actualizando producto vendido: ${itemId}`);
+
+      // (3) Refrescar el producto en tu DB llamando a handleItemNotification
+      await handleItemNotification(`/items/${itemId}`, accessToken);
+    }
+  } catch (error: any) {
+    console.error("❌ Error procesando notificación de orden:", error.response?.data || error.message);
+  }
 }
+
 
 // -------------------- TOKEN --------------------
 async function getCurrentToken() {
