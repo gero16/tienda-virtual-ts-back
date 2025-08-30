@@ -95,7 +95,8 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
     console.log("⚠️ No se pudo obtener la descripción para:", item.id);
   }
 
-  await Producto.updateOne(
+  // --- Producto ---
+  let producto = await Producto.findOneAndUpdate(
     { ml_id: item.id },
     {
       ml_id: item.id,
@@ -132,10 +133,60 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       date_created: item.date_created ? new Date(item.date_created) : new Date(),
       last_updated: item.last_updated ? new Date(item.last_updated) : new Date()
     },
-    { upsert: true }
+    { upsert: true, new: true }
   );
 
-  console.log(`✅ Item ${item.id} actualizado en DB con información completa`);
+  // --- Variantes ---
+  if (item.variations?.length > 0 && producto) {
+    const varianteIds: string[] = [];
+
+    for (const variante of item.variations) {
+      if (!variante.id) continue;
+
+      const color = variante.attribute_combinations.find(
+        (a: any) => a.id === "COLOR"
+      )?.value_name || null;
+
+      const size = variante.attribute_combinations.find(
+        (a: any) => a.id === "SIZE"
+      )?.value_name || null;
+
+      const savedVariante = await Variante.findOneAndUpdate(
+        { id: variante.id.toString() },
+        {
+          id: variante.id.toString(),
+          product_id: producto._id,
+          color,
+          size,
+          stock: variante.available_quantity,
+          price: variante.price || item.price,
+          images: variante.picture_ids?.map((id: string) => ({
+            id: id,
+            url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
+            high_quality: `https://http2.mlstatic.com/D_${id}-O.jpg`
+          })) || [],
+          attribute_combinations: variante.attribute_combinations?.map((attr: any) => ({
+            id: attr.id,
+            name: attr.name,
+            value_id: attr.value_id,
+            value_name: attr.value_name
+          })) || []
+        },
+        { upsert: true, new: true }
+      );
+
+      if (savedVariante) {
+        varianteIds.push(savedVariante._id.toString());
+      }
+    }
+
+    producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
+    await producto.save();
+
+    console.log(`✅ Item ${item.id} actualizado en DB con ${varianteIds.length} variantes`);
+  } else {
+    console.log(`✅ Item ${item.id} actualizado en DB con información completa`);
+  }
 }
 
 async function handleOrderNotification(resourceUrl: string, accessToken: string) {
