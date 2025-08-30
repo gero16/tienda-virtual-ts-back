@@ -1,13 +1,12 @@
 import mercadopago from "mercadopago";
 import express, { Router, Request, Response } from "express";
 import colors from "colors";
-
 import ProductoModel from "../models/products-model";
 
 const router = Router();
 
 // =====================
-// Tipos auxiliares
+// Tipos auxiliares (compatibles con MercadoPago)
 // =====================
 interface Producto {
   _id: string;
@@ -20,50 +19,315 @@ interface Producto {
   cantidad: number;
 }
 
+// Usar los tipos correctos de MercadoPago
 interface PreferenceItem {
   id?: string;
   title: string;
   quantity: number;
   unit_price: number;
+  currency_id?: "ARS" | "BRL" | "CLP" | "MXN" | "COP" | "PEN" | "UYU" | "VES" | "USD" | "EUR";
 }
 
 interface PreferenceCreateRequest {
   purpose?: "wallet_purchase";
   items: PreferenceItem[];
+  back_urls?: {
+    success: string;
+    failure: string;
+    pending: string;
+  };
+  auto_return?: "approved";
 }
 
 // =====================
-// Configurar credenciales
+// Configurar credenciales con validación
 // =====================
-mercadopago.configure({
-  access_token: process.env.MP_ACCESS_TOKEN as string,
-});
+const mpAccessToken = process.env.MP_ACCESS_TOKEN;
+
+if (!mpAccessToken) {
+  console.error(colors.red("ERROR: MP_ACCESS_TOKEN environment variable is not set"));
+  console.error(colors.red("Por favor, verifica tu archivo .env"));
+} else {
+  try {
+    mercadopago.configure({
+      access_token: mpAccessToken,
+    });
+    console.log(colors.green("✅ MercadoPago configurado correctamente"));
+  } catch (error) {
+    console.error(colors.red("❌ Error configurando MercadoPago:"), error);
+  }
+}
 
 // =====================
 // Crear preferencia
 // =====================
 router.post("/create_preference", async (req: Request, res: Response) => {
   try {
+    // Verificar si MP está configurado
+    if (!mpAccessToken) {
+      return res.status(500).json({ 
+        error: "MercadoPago no está configurado. MP_ACCESS_TOKEN no encontrado." 
+      });
+    }
+
     const { title, quantity, price } = req.body;
 
-    const preference: PreferenceCreateRequest = {
-      purpose: "wallet_purchase", // podés omitirlo para permitir guest checkout
+    // Validar campos requeridos
+    if (!title || !quantity || !price) {
+      return res.status(400).json({ 
+        error: "Faltan campos requeridos: title, quantity o price" 
+      });
+    }
+
+    // Convertir y validar tipos de datos - CORREGIDO AQUÍ
+    const quantityNum = typeof quantity === 'string' ? parseFloat(quantity) : Number(quantity);
+    const priceNum = typeof price === 'string' ? parseFloat(price) : Number(price);
+    
+    if (isNaN(quantityNum) || isNaN(priceNum)) {
+      return res.status(400).json({ 
+        error: "Quantity y price deben ser números válidos" 
+      });
+    }
+
+    if (quantityNum <= 0 || priceNum <= 0) {
+      return res.status(400).json({ 
+        error: "Quantity y price deben ser mayores a 0" 
+      });
+    }
+
+    // Crear el payload con los tipos correctos - CORREGIDO AQUÍ
+    const preference = {
+      purpose: "wallet_purchase" as const,
       items: [
         {
-          id: "item-ID-1234",
-          title,
-          quantity: Number(quantity),
-          unit_price: Number(price),
+          id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          title: title.toString().substring(0, 255),
+          quantity: quantityNum, // Asegurar que es número
+          unit_price: priceNum,  // Asegurar que es número
+          currency_id: "ARS" as const,
         },
       ],
+      back_urls: {
+        success: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success`,
+        failure: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failure`,
+        pending: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/pending`,
+      },
+      auto_return: "approved" as const,
     };
 
     const response = await mercadopago.preferences.create(preference);
+    
+    return res.json({ 
+      preferenceId: response.body.id,
+      init_point: response.body.init_point,
+      sandbox_init_point: response.body.sandbox_init_point
+    });
 
-    return res.json({ preferenceId: response.body.id });
+  } catch (error: any) {
+    console.error(colors.red("Error creando preferencia:"), error);
+    
+    // Manejar errores específicos de MercadoPago
+    if (error.response && error.response.body) {
+      return res.status(error.status || 500).json({ 
+        error: "Error de MercadoPago",
+        details: error.response.body 
+      });
+    }
+    
+    return res.status(500).json({ 
+      error: "Error interno del servidor creando la preferencia",
+      details: error.message 
+    });
+  }
+});
+
+// =====================
+// Crear preferencia con múltiples items
+// =====================
+router.post("/create_preference_multi", async (req: Request, res: Response) => {
+  try {
+    if (!mpAccessToken) {
+      return res.status(500).json({ 
+        error: "MercadoPago no está configurado" 
+      });
+    }
+
+    const { items } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ 
+        error: "Se requiere un array de items" 
+      });
+    }
+
+    // Validar y formatear items - CORREGIDO AQUÍ
+    const formattedItems = items.map((item: any, index: number) => {
+      const quantityNum = typeof item.quantity === 'string' ? parseFloat(item.quantity) : Number(item.quantity);
+      const priceNum = typeof item.unit_price === 'string' ? parseFloat(item.unit_price) : Number(item.unit_price);
+      
+      if (isNaN(quantityNum) || isNaN(priceNum) || quantityNum <= 0 || priceNum <= 0) {
+        throw new Error(`Item ${index + 1} tiene quantity o price inválidos`);
+      }
+
+      return {
+        id: item.id || `item-${Date.now()}-${index}`,
+        title: item.title.toString().substring(0, 255),
+        quantity: quantityNum, // Asegurar número
+        unit_price: priceNum,  // Asegurar número
+        currency_id: "ARS" as const,
+      };
+    });
+
+    const preference = {
+      items: formattedItems,
+      back_urls: {
+        success: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success`,
+        failure: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failure`,
+        pending: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/pending`,
+      },
+      auto_return: "approved" as const,
+    };
+
+    const response = await mercadopago.preferences.create(preference);
+    
+    return res.json({ 
+      preferenceId: response.body.id,
+      init_point: response.body.init_point
+    });
+
+  } catch (error: any) {
+    console.error(colors.red("Error creando preferencia múltiple:"), error);
+    return res.status(500).json({ 
+      error: "Error creando preferencia con múltiples items",
+      details: error.message 
+    });
+  }
+});
+
+// =====================
+// Crear preferencia desde carrito de compras
+// =====================
+router.post("/create_preference_cart", async (req: Request, res: Response) => {
+  try {
+    if (!mpAccessToken) {
+      return res.status(500).json({ 
+        error: "MercadoPago no está configurado" 
+      });
+    }
+
+    const { cartItems } = req.body;
+
+    if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) {
+      return res.status(400).json({ 
+        error: "Se requiere un array de cartItems" 
+      });
+    }
+
+    // Procesar items del carrito - CORREGIDO AQUÍ
+    const formattedItems = cartItems.map((item: any, index: number) => {
+      // Asegurar que quantity y price sean números
+      const quantityNum = typeof item.cantidad === 'string' ? parseFloat(item.cantidad) : Number(item.cantidad);
+      const priceNum = typeof item.price === 'string' ? parseFloat(item.price) : Number(item.price);
+      
+      if (isNaN(quantityNum) || isNaN(priceNum) || quantityNum <= 0 || priceNum <= 0) {
+        throw new Error(`Item ${index + 1} tiene cantidad o precio inválidos`);
+      }
+
+      return {
+        id: item.id || item._id || `item-${Date.now()}-${index}`,
+        title: item.name || item.title || `Producto ${index + 1}`,
+        quantity: quantityNum,
+        unit_price: priceNum,
+        currency_id: "ARS" as const,
+      };
+    });
+
+    const preference = {
+      items: formattedItems,
+      back_urls: {
+        success: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success`,
+        failure: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failure`,
+        pending: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/pending`,
+      },
+      auto_return: "approved" as const,
+    };
+
+    const response = await mercadopago.preferences.create(preference);
+    
+    return res.json({ 
+      preferenceId: response.body.id,
+      init_point: response.body.init_point,
+      sandbox_init_point: response.body.sandbox_init_point
+    });
+
+  } catch (error: any) {
+    console.error(colors.red("Error creando preferencia desde carrito:"), error);
+    return res.status(500).json({ 
+      error: "Error creando preferencia desde carrito",
+      details: error.message 
+    });
+  }
+});
+
+// =====================
+// Webhook para recibir notificaciones de pago
+// =====================
+router.post("/webhook", async (req: Request, res: Response) => {
+  try {
+    const { type, data } = req.body;
+    
+    if (type === "payment") {
+      const paymentId = data.id;
+      console.log(colors.blue(`📦 Recibido webhook para payment ID: ${paymentId}`));
+      
+      return res.status(200).json({ received: true });
+    }
+    
+    return res.status(200).json({ received: true });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Error creando la preferencia" });
+    console.error(colors.red("Error en webhook:"), error);
+    return res.status(500).json({ error: "Error procesando webhook" });
+  }
+});
+
+// =====================
+// Obtener información de un pago
+// =====================
+router.get("/payment/:id", async (req: Request, res: Response) => {
+  try {
+    if (!mpAccessToken) {
+      return res.status(500).json({ 
+        error: "MercadoPago no configurado" 
+      });
+    }
+
+    const paymentId = req.params.id;
+    
+    // CONVERTIR EL ID A NÚMERO - SOLUCIÓN DEL ERROR
+    const paymentIdNumber = Number(paymentId);
+    
+    if (isNaN(paymentIdNumber)) {
+      return res.status(400).json({ 
+        error: "ID de pago inválido, debe ser un número" 
+      });
+    }
+
+    const payment = await mercadopago.payment.findById(paymentIdNumber);
+    
+    return res.json({
+      status: payment.body.status,
+      status_detail: payment.body.status_detail,
+      payment_method: payment.body.payment_method_id,
+      amount: payment.body.transaction_amount,
+      date_created: payment.body.date_created,
+      date_approved: payment.body.date_approved
+    });
+  } catch (error: any) {
+    console.error(colors.red("Error obteniendo pago:"), error);
+    return res.status(500).json({ 
+      error: "Error obteniendo información del pago",
+      details: error.message 
+    });
   }
 });
 
@@ -71,7 +335,11 @@ router.post("/create_preference", async (req: Request, res: Response) => {
 // Rutas de prueba
 // =====================
 router.get("/", (req: Request, res: Response) => {
-  res.send("Hola, mundo desde el enrutador!");
+  res.json({ 
+    message: "API de MercadoPago funcionando",
+    configured: !!mpAccessToken,
+    timestamp: new Date().toISOString()
+  });
 });
 
 router.get("/productos", async (req: Request, res: Response) => {
@@ -92,6 +360,18 @@ router.get("/productos", async (req: Request, res: Response) => {
     let msg: string = "Error en la Consulta";
     return res.status(500).json({ msg });
   }
+});
+
+// =====================
+// Health check endpoint
+// =====================
+router.get("/health", (req: Request, res: Response) => {
+  res.json({
+    status: "OK",
+    mercadopago: mpAccessToken ? "configured" : "not_configured",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development"
+  });
 });
 
 export default router;
