@@ -70,68 +70,59 @@ router.post("/create_preference", async (req: Request, res: Response) => {
       });
     }
 
-    const { title, quantity, price } = req.body;
+    const { items, payer, back_urls, external_reference } = req.body;
 
-    // Validar campos requeridos
-    if (!title || !quantity || !price) {
+    // Validar que hay items
+    if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ 
-        error: "Faltan campos requeridos: title, quantity o price" 
+        error: "Se requiere un array de items" 
       });
     }
 
-    // Convertir y validar tipos de datos - CORREGIDO AQUÍ
-    const quantityNum = typeof quantity === 'string' ? parseFloat(quantity) : Number(quantity);
-    const priceNum = typeof price === 'string' ? parseFloat(price) : Number(price);
-    
-    if (isNaN(quantityNum) || isNaN(priceNum)) {
-      return res.status(400).json({ 
-        error: "Quantity y price deben ser números válidos" 
-      });
-    }
+    // Procesar y validar items
+    const formattedItems = items.map((item: any, index: number) => {
+      const quantityNum = typeof item.quantity === 'string' ? parseFloat(item.quantity) : Number(item.quantity);
+      const priceNum = typeof item.unit_price === 'string' ? parseFloat(item.unit_price) : Number(item.unit_price);
+      
+      if (isNaN(quantityNum) || isNaN(priceNum) || quantityNum <= 0 || priceNum <= 0) {
+        throw new Error(`Item ${index + 1} tiene quantity o unit_price inválidos`);
+      }
 
-    if (quantityNum <= 0 || priceNum <= 0) {
-      return res.status(400).json({ 
-        error: "Quantity y price deben ser mayores a 0" 
-      });
-    }
+      return {
+        id: item.id || `item-${Date.now()}-${index}`,
+        title: item.title.toString().substring(0, 255),
+        quantity: quantityNum,
+        unit_price: priceNum,
+        currency_id: item.currency_id || "UYU", // Usar UYU como en el frontend
+      };
+    });
 
-    // Crear el payload con los tipos correctos - CORREGIDO AQUÍ
+    // Crear la preferencia con el formato completo
     const preference = {
-      purpose: "wallet_purchase" as const,
-      items: [
-        {
-          id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          title: title.toString().substring(0, 255),
-          quantity: quantityNum, // Asegurar que es número
-          unit_price: priceNum,  // Asegurar que es número
-          currency_id: "ARS" as const,
-        },
-      ],
-      back_urls: {
+      items: formattedItems,
+      payer: payer || {},
+      back_urls: back_urls || {
         success: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success`,
         failure: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failure`,
         pending: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/pending`,
       },
       auto_return: "approved" as const,
+      external_reference: external_reference || `ORDER-${Date.now()}`,
     };
 
     const response = await mercadopago.preferences.create(preference);
     
     return res.json({ 
-      preferenceId: response.body.id,
-      init_point: response.body.init_point,
-      sandbox_init_point: response.body.sandbox_init_point
+      id: response.body.id, // Cambiado de preferenceId a id
+      init_point: response.body.init_point // Cambiado de initPoint a init_point
     });
 
   } catch (error: any) {
     console.error(colors.red("Error creando preferencia:"), error);
     
-    // Manejar errores específicos de MercadoPago
+    // Log completo del error para debugging
     if (error.response && error.response.body) {
-      return res.status(error.status || 500).json({ 
-        error: "Error de MercadoPago",
-        details: error.response.body 
-      });
+      console.error(colors.red("Detalles del error MP:"), error.response.body);
     }
     
     return res.status(500).json({ 
@@ -140,7 +131,6 @@ router.post("/create_preference", async (req: Request, res: Response) => {
     });
   }
 });
-
 // =====================
 // Crear preferencia con múltiples items
 // =====================
