@@ -61,16 +61,18 @@ if (!mpAccessToken) {
 // =====================
 // Crear preferencia
 // =====================
+// =====================
+// Crear preferencia (sin datos del payer - son opcionales)
+// =====================
 router.post("/create_preference", async (req: Request, res: Response) => {
   try {
-    // Verificar si MP está configurado
     if (!mpAccessToken) {
       return res.status(500).json({ 
         error: "MercadoPago no está configurado. MP_ACCESS_TOKEN no encontrado." 
       });
     }
 
-    const { items, payer, back_urls, external_reference } = req.body;
+    const { items, back_urls, external_reference } = req.body;
 
     // Validar que hay items
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -93,44 +95,45 @@ router.post("/create_preference", async (req: Request, res: Response) => {
         title: item.title.toString().substring(0, 255),
         quantity: quantityNum,
         unit_price: priceNum,
-        currency_id: item.currency_id || "UYU", // Usar UYU como en el frontend
+        currency_id: item.currency_id || "UYU",
       };
     });
 
-    // Crear la preferencia con el formato completo
-    const preference = {
+    // Crear la preferencia SIN datos del payer (son opcionales)
+    const preference: any = {
       items: formattedItems,
-      payer: payer || {},
       back_urls: back_urls || {
         success: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success`,
         failure: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failure`,
         pending: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/pending`,
       },
-      auto_return: "approved" as const,
+      auto_return: "approved",
       external_reference: external_reference || `ORDER-${Date.now()}`,
     };
+
+    console.log("✅ Creando preferencia con items:", formattedItems.length);
 
     const response = await mercadopago.preferences.create(preference);
     
     return res.json({ 
-      id: response.body.id, // Cambiado de preferenceId a id
-      init_point: response.body.init_point // Cambiado de initPoint a init_point
+      id: response.body.id,
+      init_point: response.body.init_point
     });
 
   } catch (error: any) {
     console.error(colors.red("Error creando preferencia:"), error);
     
-    // Log completo del error para debugging
     if (error.response && error.response.body) {
-      console.error(colors.red("Detalles del error MP:"), error.response.body);
+      console.error(colors.red("Detalles del error MP:"), JSON.stringify(error.response.body, null, 2));
     }
     
     return res.status(500).json({ 
       error: "Error interno del servidor creando la preferencia",
-      details: error.message 
+      details: error.message
     });
   }
 });
+
 // =====================
 // Crear preferencia con múltiples items
 // =====================
