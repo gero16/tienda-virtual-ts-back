@@ -78,11 +78,44 @@ async function handlePriceNotification(resourceUrl: string, accessToken: string)
   }
 }
 
+
+// Función auxiliar para detectar cambios específicos en variantes
+async function detectVariantChanges(productId: string, newVariations: any[]) {
+  const producto = await Producto.findOne({ ml_id: productId }).populate('variantes');
+  if (!producto) return { changes: [], summary: "Producto no encontrado" };
+
+  const currentVariants = (producto.variantes as any[]) || [];
+  const changes: string[] = [];
+
+  // Comparar cantidad de variantes
+  if (currentVariants.length !== newVariations.length) {
+    changes.push(`📊 Cantidad de variantes cambió: ${currentVariants.length} → ${newVariations.length}`);
+  }
+
+  // Detectar cambios en stock
+  for (const newVar of newVariations) {
+    const currentVar = currentVariants.find((v: any) => v.id === newVar.id?.toString());
+    if (currentVar && currentVar.stock !== newVar.available_quantity) {
+      changes.push(`📦 Stock variante ${newVar.id}: ${currentVar.stock} → ${newVar.available_quantity}`);
+    }
+  }
+
+  return {
+    changes,
+    summary: changes.length > 0 
+      ? `${changes.length} cambios detectados en variantes` 
+      : "No se detectaron cambios en variantes"
+  };
+}
+
 async function handleItemNotification(resourceUrl: string, accessToken: string) {
+  try {
   const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
   const { data: item } = await axios.get(fullUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
+
+    console.log(`🔄 Procesando notificación para item: ${item.id}`);
 
   // Obtener descripción por separado
   let description = "";
@@ -95,7 +128,8 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
     console.log("⚠️ No se pudo obtener la descripción para:", item.id);
   }
 
-  await Producto.updateOne(
+    // --- Actualizar/Crear Producto ---
+    let producto = await Producto.findOneAndUpdate(
     { ml_id: item.id },
     {
       ml_id: item.id,
@@ -132,12 +166,90 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       date_created: item.date_created ? new Date(item.date_created) : new Date(),
       last_updated: item.last_updated ? new Date(item.last_updated) : new Date()
     },
-    { upsert: true }
-  );
+      { upsert: true, new: true }
+    );
 
-  console.log(`✅ Item ${item.id} actualizado en DB con información completa`);
+    // --- 🚀 DETECCIÓN Y PROCESAMIENTO DE VARIANTES ---
+    if (item.variations && item.variations.length > 0) {
+      console.log(`🎨 Detectadas ${item.variations.length} variantes para producto ${item.id}`);
+      
+      // Obtener variantes existentes en la DB para comparar
+      const variantesExistentes = await Variante.find({ product_id: producto._id });
+      const idsExistentes = variantesExistentes.map(v => v.id);
+      const idsNuevas = item.variations.map((v: any) => v.id?.toString()).filter(Boolean);
+      
+      // Detectar variantes nuevas
+      const variantesNuevas = idsNuevas.filter((id: string) => !idsExistentes.includes(id));
+      if (variantesNuevas.length > 0) {
+        console.log(`✨ Se detectaron ${variantesNuevas.length} variantes NUEVAS:`, variantesNuevas);
+      }
+
+      // Detectar variantes eliminadas
+      const variantesEliminadas = idsExistentes.filter((id: string) => !idsNuevas.includes(id));
+      if (variantesEliminadas.length > 0) {
+        console.log(`🗑️ Se detectaron ${variantesEliminadas.length} variantes ELIMINADAS:`, variantesEliminadas);
+        await Variante.deleteMany({ id: { $in: variantesEliminadas } });
+      }
+
+      const varianteIds: string[] = [];
+
+      // Procesar cada variante
+      for (const variante of item.variations) {
+        if (!variante.id) continue;
+
+        const color = variante.attribute_combinations?.find(
+          (a: any) => a.id === "COLOR"
+        )?.value_name || null;
+
+        const size = variante.attribute_combinations?.find(
+          (a: any) => a.id === "SIZE"
+        )?.value_name || null;
+
+        console.log(`🔧 Procesando variante ${variante.id}: Color=${color}, Talla=${size}, Stock=${variante.available_quantity}`);
+
+        const savedVariante = await Variante.findOneAndUpdate(
+          { id: variante.id.toString() },
+          {
+            id: variante.id.toString(),
+            product_id: producto._id,
+            color,
+            size,
+            stock: variante.available_quantity,
+            price: variante.price || item.price,
+            images: variante.picture_ids?.map((id: string) => ({
+              id: id,
+              url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
+              high_quality: `https://http2.mlstatic.com/D_${id}-O.jpg`
+            })) || [],
+            attribute_combinations: variante.attribute_combinations?.map((attr: any) => ({
+              id: attr.id,
+              name: attr.name,
+              value_id: attr.value_id,
+              value_name: attr.value_name
+            })) || []
+          },
+          { upsert: true, new: true }
+        );
+
+        if (savedVariante) {
+          varianteIds.push(savedVariante._id.toString());
+        }
+      }
+
+      // Actualizar referencias de variantes en el producto
+      producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
+      await producto.save();
+
+      console.log(`✅ Producto ${item.id} actualizado con ${varianteIds.length} variantes`);
+    } else {
+      console.log(`📦 Producto ${item.id} sin variantes`);
+    }
+
+  } catch (error: any) {
+    console.error(`❌ Error en handleItemNotification para ${resourceUrl}:`, error.message);
+    throw error;
+  }
 }
-
 async function handleOrderNotification(resourceUrl: string, accessToken: string) {
   try {
     const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
@@ -462,6 +574,146 @@ router.get("/sync/force", async (req: Request, res: Response) => {
   }
 });
 
+
+// Función para detectar y limpiar productos eliminados de MercadoLibre
+async function detectAndCleanupDeletedProducts() {
+  try {
+    console.log("🧹 Iniciando limpieza de productos eliminados...");
+    
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    // Obtener productos de MercadoLibre
+    const itemsResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+    
+    const mlProductIds = itemsResponse.data.results || [];
+    console.log(`📊 Productos en MercadoLibre: ${mlProductIds.length}`);
+
+    // Obtener productos de la base de datos
+    const dbProducts = await Producto.find({});
+    console.log(`📊 Productos en base de datos: ${dbProducts.length}`);
+
+    // Encontrar productos eliminados (en DB pero no en ML)
+    const dbProductIds = dbProducts.map(p => p.ml_id);
+    const deletedProductIds = dbProductIds.filter(id => !mlProductIds.includes(id));
+
+    if (deletedProductIds.length === 0) {
+      console.log("✅ No se encontraron productos eliminados");
+      return {
+        message: "No se encontraron productos eliminados",
+        deleted_count: 0,
+        deleted_products: []
+      };
+    }
+
+    console.log(`🗑️ Productos eliminados detectados: ${deletedProductIds.length}`);
+    console.log(`📋 IDs eliminados: ${deletedProductIds.join(', ')}`);
+
+    // Obtener información de los productos antes de eliminarlos
+    const deletedProducts = await Producto.find({ ml_id: { $in: deletedProductIds } });
+    const deletedProductsInfo = deletedProducts.map(p => ({
+      ml_id: p.ml_id,
+      title: p.title,
+      _id: p._id
+    }));
+
+    // Eliminar productos de la base de datos
+    const deleteResult = await Producto.deleteMany({ ml_id: { $in: deletedProductIds } });
+    
+    // También eliminar variantes asociadas
+    const deletedProductObjectIds = deletedProducts.map(p => p._id);
+    const variantesResult = await Variante.deleteMany({ 
+      product_id: { $in: deletedProductObjectIds } 
+    });
+
+    console.log(`✅ Limpieza completada:`);
+    console.log(`   • Productos eliminados: ${deleteResult.deletedCount}`);
+    console.log(`   • Variantes eliminadas: ${variantesResult.deletedCount}`);
+
+    return {
+      message: "Limpieza completada exitosamente",
+      deleted_count: deleteResult.deletedCount,
+      deleted_products: deletedProductsInfo,
+      deleted_variantes: variantesResult.deletedCount
+    };
+
+  } catch (error: any) {
+    console.error("❌ Error en limpieza de productos:", error.message);
+    throw error;
+  }
+}
+
+// Endpoint manual para limpiar productos eliminados
+router.post("/sync/cleanup", async (req: Request, res: Response) => {
+  try {
+    console.log("🧹 Iniciando limpieza manual de productos eliminados...");
+    
+    const result = await detectAndCleanupDeletedProducts();
+    
+    res.json({
+      success: true,
+      ...result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en limpieza manual:", err.message);
+    res.status(500).json({ 
+      success: false,
+      error: "Error en limpieza de productos eliminados: " + err.message 
+    });
+  }
+});
+
+// Endpoint para simular limpieza (solo mostrar qué se eliminaría)
+router.get("/sync/cleanup/preview", async (req: Request, res: Response) => {
+  try {
+    console.log("👀 Generando preview de limpieza...");
+    
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    // Obtener productos de MercadoLibre
+    const itemsResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+    
+    const mlProductIds = itemsResponse.data.results || [];
+
+    // Obtener productos de la base de datos
+    const dbProducts = await Producto.find({});
+    const dbProductIds = dbProducts.map(p => p.ml_id);
+    
+    // Encontrar productos que se eliminarían
+    const deletedProductIds = dbProductIds.filter(id => !mlProductIds.includes(id));
+    const deletedProducts = await Producto.find({ ml_id: { $in: deletedProductIds } });
+    
+    const deletedProductsInfo = deletedProducts.map(p => ({
+      ml_id: p.ml_id,
+      title: p.title,
+      _id: p._id,
+      variantes_count: 0 // Se puede calcular si es necesario
+    }));
+
+    res.json({
+      message: "Preview de limpieza generado",
+      would_delete_count: deletedProductIds.length,
+      would_delete_products: deletedProductsInfo,
+      ml_products_count: mlProductIds.length,
+      db_products_count: dbProducts.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en preview de limpieza:", err.message);
+    res.status(500).json({ 
+      error: "Error generando preview de limpieza: " + err.message 
+    });
+  }
+});
+
 router.get('/productos/:id', async (req: Request, res: Response)  => {
   try {
     const producto = await Producto.findById(req.params.id).populate('variantes');
@@ -469,6 +721,229 @@ router.get('/productos/:id', async (req: Request, res: Response)  => {
   } catch (error) {
     res.status(500).json({ error: 'Error al obtener el producto' });
   }
+
+// -------------------- NUEVOS ENDPOINTS PARA PRODUCTOS BASE --------------------
+
+// Endpoint para obtener solo productos base (con variantes)
+router.get("/productos-base", async (req: Request, res: Response) => {
+  try {
+    const productosBase = await Producto.find({
+      es_producto_base: true,
+      variantes: { $exists: true, $ne: [] }
+    }).populate("variantes");
+    
+    res.json({
+      message: "Productos base obtenidos exitosamente",
+      count: productosBase.length,
+      productos: productosBase
+    });
+  } catch (err: any) {
+    res.status(500).send("❌ Error al obtener productos base: " + err.message);
+  }
+});
+
+// Endpoint para obtener solo variantes individuales
+router.get("/variantes", async (req: Request, res: Response) => {
+  try {
+    const variantes = await Variante.find().populate("product_id");
+    res.json({
+      message: "Variantes obtenidas exitosamente",
+      count: variantes.length,
+      variantes: variantes
+    });
+  } catch (err: any) {
+    res.status(500).send("❌ Error al obtener variantes: " + err.message);
+  }
+});
+
+// Endpoint para obtener productos sin variantes (productos simples)
+router.get("/productos-simples", async (req: Request, res: Response) => {
+  try {
+    const productosSimples = await Producto.find({
+      es_producto_base: true,
+      variantes: { $exists: true, $size: 0 }
+    });
+    
+    res.json({
+      message: "Productos simples obtenidos exitosamente",
+      count: productosSimples.length,
+      productos: productosSimples
+    });
+  } catch (err: any) {
+    res.status(500).send("❌ Error al obtener productos simples: " + err.message);
+  }
+});
+
+// Endpoint para obtener estadísticas de productos
+router.get("/productos/estadisticas", async (req: Request, res: Response) => {
+  try {
+    const totalProductos = await Producto.countDocuments();
+    const productosBase = await Producto.countDocuments({ es_producto_base: true });
+    const productosConVariantes = await Producto.countDocuments({
+      es_producto_base: true,
+      variantes: { $exists: true, $ne: [] }
+    });
+    const productosSimples = await Producto.countDocuments({
+      es_producto_base: true,
+      variantes: { $exists: true, $size: 0 }
+    });
+    const totalVariantes = await Variante.countDocuments();
+    
+    res.json({
+      message: "Estadísticas de productos obtenidas exitosamente",
+      estadisticas: {
+        total_productos: totalProductos,
+        productos_base: productosBase,
+        productos_con_variantes: productosConVariantes,
+        productos_simples: productosSimples,
+        total_variantes: totalVariantes
+      }
+    });
+  } catch (err: any) {
+    res.status(500).send("❌ Error al obtener estadísticas: " + err.message);
+  }
+});
+
+// Función para detectar y limpiar productos eliminados de MercadoLibre
+async function detectAndCleanupDeletedProducts() {
+  try {
+    console.log("🧹 Iniciando limpieza de productos eliminados...");
+    
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    // Obtener productos de MercadoLibre
+    const itemsResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+    
+    const mlProductIds = itemsResponse.data.results || [];
+    console.log(`📊 Productos en MercadoLibre: ${mlProductIds.length}`);
+
+    // Obtener productos de la base de datos
+    const dbProducts = await Producto.find({});
+    console.log(`📊 Productos en base de datos: ${dbProducts.length}`);
+
+    // Encontrar productos eliminados (en DB pero no en ML)
+    const dbProductIds = dbProducts.map(p => p.ml_id);
+    const deletedProductIds = dbProductIds.filter(id => !mlProductIds.includes(id));
+
+    if (deletedProductIds.length === 0) {
+      console.log("✅ No se encontraron productos eliminados");
+      return {
+        message: "No se encontraron productos eliminados",
+        deleted_count: 0,
+        deleted_products: []
+      };
+    }
+
+    console.log(`🗑️ Productos eliminados detectados: ${deletedProductIds.length}`);
+    console.log(`📋 IDs eliminados: ${deletedProductIds.join(', ')}`);
+
+    // Obtener información de los productos antes de eliminarlos
+    const deletedProducts = await Producto.find({ ml_id: { $in: deletedProductIds } });
+    const deletedProductsInfo = deletedProducts.map(p => ({
+      ml_id: p.ml_id,
+      title: p.title,
+      _id: p._id
+    }));
+
+    // Eliminar productos de la base de datos
+    const deleteResult = await Producto.deleteMany({ ml_id: { $in: deletedProductIds } });
+    
+    // También eliminar variantes asociadas
+    const deletedProductObjectIds = deletedProducts.map(p => p._id);
+    const variantesResult = await Variante.deleteMany({ 
+      product_id: { $in: deletedProductObjectIds } 
+    });
+
+    console.log(`✅ Limpieza completada:`);
+    console.log(`   • Productos eliminados: ${deleteResult.deletedCount}`);
+    console.log(`   • Variantes eliminadas: ${variantesResult.deletedCount}`);
+
+    return {
+      message: "Limpieza completada exitosamente",
+      deleted_count: deleteResult.deletedCount,
+      deleted_products: deletedProductsInfo,
+      deleted_variantes: variantesResult.deletedCount
+    };
+
+  } catch (error: any) {
+    console.error("❌ Error en limpieza de productos:", error.message);
+    throw error;
+  }
+}
+
+// Endpoint manual para limpiar productos eliminados
+router.post("/sync/cleanup", async (req: Request, res: Response) => {
+  try {
+    console.log("🧹 Iniciando limpieza manual de productos eliminados...");
+    
+    const result = await detectAndCleanupDeletedProducts();
+    
+    res.json({
+      success: true,
+      ...result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en limpieza manual:", err.message);
+    res.status(500).json({ 
+      success: false,
+      error: "Error en limpieza de productos eliminados: " + err.message 
+    });
+  }
+});
+
+// Endpoint para simular limpieza (solo mostrar qué se eliminaría)
+router.get("/sync/cleanup/preview", async (req: Request, res: Response) => {
+  try {
+    console.log("👀 Generando preview de limpieza...");
+    
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    // Obtener productos de MercadoLibre
+    const itemsResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+    
+    const mlProductIds = itemsResponse.data.results || [];
+
+    // Obtener productos de la base de datos
+    const dbProducts = await Producto.find({});
+    const dbProductIds = dbProducts.map(p => p.ml_id);
+    
+    // Encontrar productos que se eliminarían
+    const deletedProductIds = dbProductIds.filter(id => !mlProductIds.includes(id));
+    const deletedProducts = await Producto.find({ ml_id: { $in: deletedProductIds } });
+    
+    const deletedProductsInfo = deletedProducts.map(p => ({
+      ml_id: p.ml_id,
+      title: p.title,
+      _id: p._id,
+      variantes_count: 0 // Se puede calcular si es necesario
+    }));
+
+    res.json({
+      message: "Preview de limpieza generado",
+      would_delete_count: deletedProductIds.length,
+      would_delete_products: deletedProductsInfo,
+      ml_products_count: mlProductIds.length,
+      db_products_count: dbProducts.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en preview de limpieza:", err.message);
+    res.status(500).json({ 
+      error: "Error generando preview de limpieza: " + err.message 
+    });
+  }
+});
+
+
 });
 
 // -------------------- CRON --------------------

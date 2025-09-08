@@ -37,38 +37,9 @@ export interface IProducto extends Document {
     };
   };
   variantes: Types.ObjectId[] | IVariante[];
-  // Campos existentes
+  // 🆕 NUEVOS CAMPOS
   tipo: 'producto_base' | 'variante_individual';
   es_producto_base: boolean;
-  
-  // 🆕 NUEVOS CAMPOS PARA DROPSHIPPING
-  tipo_venta: 'stock_fisico' | 'dropshipping' | 'mixto';
-  
-  // Para productos con stock físico
-  stock_fisico?: {
-    cantidad_disponible: number;
-    ubicacion: string;
-    reorder_point: number;
-    ultima_actualizacion_stock: Date;
-  };
-  
-  // Para productos de dropshipping
-  dropshipping?: {
-    dias_preparacion: number;
-    dias_envio_estimado: number;
-    proveedor: string;
-    pais_origen: string;
-    requiere_confirmacion: boolean;
-    costo_importacion?: number;
-  };
-  
-  // Tiempos de entrega (calculados automáticamente)
-  tiempo_entrega_total: number; // días totales
-  tiempo_entrega_texto: string; // "18 días + envío"
-  
-  // Metadatos adicionales
-  es_importacion: boolean;
-  requiere_stock_especial: boolean;
 }
 
 const ProductoSchema = new Schema<IProducto>({
@@ -107,46 +78,13 @@ const ProductoSchema = new Schema<IProducto>({
     }
   },
   variantes: [{ type: Schema.Types.ObjectId, ref: "Variante" }],
-  // Campos existentes
+  // 🆕 NUEVOS CAMPOS
   tipo: { 
     type: String, 
     enum: ['producto_base', 'variante_individual'], 
     default: 'producto_base' 
   },
-  es_producto_base: { type: Boolean, default: true },
-  
-  // 🆕 NUEVOS CAMPOS PARA DROPSHIPPING
-  tipo_venta: { 
-    type: String, 
-    enum: ['stock_fisico', 'dropshipping', 'mixto'], 
-    default: 'stock_fisico' 
-  },
-  
-  // Para productos con stock físico
-  stock_fisico: {
-    cantidad_disponible: { type: Number, default: 0 },
-    ubicacion: { type: String, default: "" },
-    reorder_point: { type: Number, default: 5 },
-    ultima_actualizacion_stock: { type: Date, default: Date.now }
-  },
-  
-  // Para productos de dropshipping
-  dropshipping: {
-    dias_preparacion: { type: Number, default: 0 },
-    dias_envio_estimado: { type: Number, default: 7 },
-    proveedor: { type: String, default: "" },
-    pais_origen: { type: String, default: "Estados Unidos" },
-    requiere_confirmacion: { type: Boolean, default: true },
-    costo_importacion: { type: Number, default: 0 }
-  },
-  
-  // Tiempos de entrega (calculados automáticamente)
-  tiempo_entrega_total: { type: Number, default: 0 },
-  tiempo_entrega_texto: { type: String, default: "" },
-  
-  // Metadatos adicionales
-  es_importacion: { type: Boolean, default: false },
-  requiere_stock_especial: { type: Boolean, default: false }
+  es_producto_base: { type: Boolean, default: true }
 });
 
 export default model<IProducto>("Producto", ProductoSchema);
