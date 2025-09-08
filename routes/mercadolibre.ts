@@ -78,66 +78,178 @@ async function handlePriceNotification(resourceUrl: string, accessToken: string)
   }
 }
 
-async function handleItemNotification(resourceUrl: string, accessToken: string) {
-  const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
-  const { data: item } = await axios.get(fullUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
 
-  // Obtener descripción por separado
-  let description = "";
-  try {
-    const descResponse = await axios.get(`https://api.mercadolibre.com/items/${item.id}/description`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    description = descResponse.data.plain_text || "";
-  } catch (error) {
-    console.log("⚠️ No se pudo obtener la descripción para:", item.id);
+// Función auxiliar para detectar cambios específicos en variantes
+async function detectVariantChanges(productId: string, newVariations: any[]) {
+  const producto = await Producto.findOne({ ml_id: productId }).populate('variantes');
+  if (!producto) return { changes: [], summary: "Producto no encontrado" };
+
+  const currentVariants = (producto.variantes as any[]) || [];
+  const changes: string[] = [];
+
+  // Comparar cantidad de variantes
+  if (currentVariants.length !== newVariations.length) {
+    changes.push(`📊 Cantidad de variantes cambió: ${currentVariants.length} → ${newVariations.length}`);
   }
 
-  await Producto.updateOne(
-    { ml_id: item.id },
-    {
-      ml_id: item.id,
-      title: item.title,
-      price: item.price,
-      available_quantity: item.available_quantity,
-      status: item.status,
-      // Imágenes en mejor calidad
-      images: item.pictures?.map((picture: any) => ({
-        id: picture.id,
-        url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
-        max_size: picture.max_size
-      })) || [],
-      // Información adicional
-      description: description,
-      sold_quantity: item.sold_quantity || 0,
-      warranty: item.warranty || "",
-      attributes: item.attributes || [],
-      tags: item.tags || [],
-      category_id: item.category_id || "",
-      condition: item.condition || "",
-      listing_type_id: item.listing_type_id || "",
-      shipping: item.shipping || {},
-      health: item.health || 0,
-      // Métricas
-      metrics: {
-        visits: item.visits || 0,
-        reviews: {
-          rating_average: item.reviews?.rating_average || 0,
-          total: item.reviews?.total || 0
-        }
-      },
-      // Fechas importantes
-      date_created: item.date_created ? new Date(item.date_created) : new Date(),
-      last_updated: item.last_updated ? new Date(item.last_updated) : new Date()
-    },
-    { upsert: true }
-  );
+  // Detectar cambios en stock
+  for (const newVar of newVariations) {
+    const currentVar = currentVariants.find((v: any) => v.id === newVar.id?.toString());
+    if (currentVar && currentVar.stock !== newVar.available_quantity) {
+      changes.push(`📦 Stock variante ${newVar.id}: ${currentVar.stock} → ${newVar.available_quantity}`);
+    }
+  }
 
-  console.log(`✅ Item ${item.id} actualizado en DB con información completa`);
+  return {
+    changes,
+    summary: changes.length > 0 
+      ? `${changes.length} cambios detectados en variantes` 
+      : "No se detectaron cambios en variantes"
+  };
 }
 
+async function handleItemNotification(resourceUrl: string, accessToken: string) {
+  try {
+    const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
+    const { data: item } = await axios.get(fullUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    console.log(`🔄 Procesando notificación para item: ${item.id}`);
+
+    // Obtener descripción por separado
+    let description = "";
+    try {
+      const descResponse = await axios.get(`https://api.mercadolibre.com/items/${item.id}/description`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      description = descResponse.data.plain_text || "";
+    } catch (error) {
+      console.log("⚠️ No se pudo obtener la descripción para:", item.id);
+    }
+
+    // --- Actualizar/Crear Producto ---
+    let producto = await Producto.findOneAndUpdate(
+      { ml_id: item.id },
+      {
+        ml_id: item.id,
+        title: item.title,
+        price: item.price,
+        available_quantity: item.available_quantity,
+        status: item.status,
+        // Imágenes en mejor calidad
+        images: item.pictures?.map((picture: any) => ({
+          id: picture.id,
+          url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
+          max_size: picture.max_size
+        })) || [],
+        // Información adicional
+        description: description,
+        sold_quantity: item.sold_quantity || 0,
+        warranty: item.warranty || "",
+        attributes: item.attributes || [],
+        tags: item.tags || [],
+        category_id: item.category_id || "",
+        condition: item.condition || "",
+        listing_type_id: item.listing_type_id || "",
+        shipping: item.shipping || {},
+        health: item.health || 0,
+        // Métricas
+        metrics: {
+          visits: item.visits || 0,
+          reviews: {
+            rating_average: item.reviews?.rating_average || 0,
+            total: item.reviews?.total || 0
+          }
+        },
+        // Fechas importantes
+        date_created: item.date_created ? new Date(item.date_created) : new Date(),
+        last_updated: item.last_updated ? new Date(item.last_updated) : new Date()
+      },
+      { upsert: true, new: true }
+    );
+
+    // --- 🚀 DETECCIÓN Y PROCESAMIENTO DE VARIANTES ---
+    if (item.variations && item.variations.length > 0) {
+      console.log(`🎨 Detectadas ${item.variations.length} variantes para producto ${item.id}`);
+      
+      // Obtener variantes existentes en la DB para comparar
+      const variantesExistentes = await Variante.find({ product_id: producto._id });
+      const idsExistentes = variantesExistentes.map(v => v.id);
+      const idsNuevas = item.variations.map((v: any) => v.id?.toString()).filter(Boolean);
+      
+      // Detectar variantes nuevas
+      const variantesNuevas = idsNuevas.filter((id: string) => !idsExistentes.includes(id));
+      if (variantesNuevas.length > 0) {
+        console.log(`✨ Se detectaron ${variantesNuevas.length} variantes NUEVAS:`, variantesNuevas);
+      }
+
+      // Detectar variantes eliminadas
+      const variantesEliminadas = idsExistentes.filter((id: string) => !idsNuevas.includes(id));
+      if (variantesEliminadas.length > 0) {
+        console.log(`🗑️ Se detectaron ${variantesEliminadas.length} variantes ELIMINADAS:`, variantesEliminadas);
+        await Variante.deleteMany({ id: { $in: variantesEliminadas } });
+      }
+
+      const varianteIds: string[] = [];
+
+      // Procesar cada variante
+      for (const variante of item.variations) {
+        if (!variante.id) continue;
+
+        const color = variante.attribute_combinations?.find(
+          (a: any) => a.id === "COLOR"
+        )?.value_name || null;
+
+        const size = variante.attribute_combinations?.find(
+          (a: any) => a.id === "SIZE"
+        )?.value_name || null;
+
+        console.log(`🔧 Procesando variante ${variante.id}: Color=${color}, Talla=${size}, Stock=${variante.available_quantity}`);
+
+        const savedVariante = await Variante.findOneAndUpdate(
+          { id: variante.id.toString() },
+          {
+            id: variante.id.toString(),
+            product_id: producto._id,
+            color,
+            size,
+            stock: variante.available_quantity,
+            price: variante.price || item.price,
+            images: variante.picture_ids?.map((id: string) => ({
+              id: id,
+              url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
+              high_quality: `https://http2.mlstatic.com/D_${id}-O.jpg`
+            })) || [],
+            attribute_combinations: variante.attribute_combinations?.map((attr: any) => ({
+              id: attr.id,
+              name: attr.name,
+              value_id: attr.value_id,
+              value_name: attr.value_name
+            })) || []
+          },
+          { upsert: true, new: true }
+        );
+
+        if (savedVariante) {
+          varianteIds.push(savedVariante._id.toString());
+        }
+      }
+
+      // Actualizar referencias de variantes en el producto
+      producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
+      await producto.save();
+
+      console.log(`✅ Producto ${item.id} actualizado con ${varianteIds.length} variantes`);
+    } else {
+      console.log(`📦 Producto ${item.id} sin variantes`);
+    }
+
+  } catch (error: any) {
+    console.error(`❌ Error en handleItemNotification para ${resourceUrl}:`, error.message);
+    throw error;
+  }
+}
 async function handleOrderNotification(resourceUrl: string, accessToken: string) {
   try {
     const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
