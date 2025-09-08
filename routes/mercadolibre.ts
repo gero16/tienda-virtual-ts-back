@@ -109,6 +109,30 @@ async function detectVariantChanges(productId: string, newVariations: any[]) {
 }
 
 async function handleItemNotification(resourceUrl: string, accessToken: string) {
+
+// Función para calcular tiempos de entrega
+function calculateDeliveryTimes(productType: string, mlHandlingTime: number | undefined) {
+  const handlingTime = mlHandlingTime || 3;
+  
+  if (productType === "dropshipping") {
+    const diasPreparacion = handlingTime;
+    const diasEnvio = 7; // Default para envío internacional
+    const total = diasPreparacion + diasEnvio;
+    return {
+      total,
+      texto: `${diasPreparacion} días de preparación + ${diasEnvio} días de envío = ${total} días total`
+    };
+  } else {
+    const diasPreparacion = handlingTime;
+    const diasEnvio = 3; // Default para envío local
+    const total = diasPreparacion + diasEnvio;
+    return {
+      total,
+      texto: `${diasPreparacion} días de preparación + ${diasEnvio} días de envío = ${total} días total`
+    };
+  }
+}
+
   try {
   const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
   const { data: item } = await axios.get(fullUrl, {
@@ -243,6 +267,55 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       console.log(`✅ Producto ${item.id} actualizado con ${varianteIds.length} variantes`);
     } else {
       console.log(`📦 Producto ${item.id} sin variantes`);
+
+    // --- 🚀 LÓGICA DE DROPSHIPPING ---
+    const manufacturingTime = item.sale_terms?.find((term: any) => 
+      term.id === "MANUFACTURING_TIME"
+    );
+    
+    let handlingTime = 3; // Default para stock físico
+    
+    if (manufacturingTime?.value_struct?.number) {
+      handlingTime = manufacturingTime.value_struct.number;
+    }
+    
+    const productType = handlingTime > 14 ? "dropshipping" : "stock_fisico";
+    const deliveryTimes = calculateDeliveryTimes(productType, handlingTime);
+    
+    // Actualizar producto con información de dropshipping
+    const updateData: any = {
+      tipo_venta: productType,
+      tiempo_entrega_total: deliveryTimes.total,
+      tiempo_entrega_texto: deliveryTimes.texto
+    };
+    
+    if (productType === "dropshipping") {
+      updateData.dropshipping = {
+        dias_preparacion: handlingTime,
+        dias_envio_estimado: 7,
+        proveedor: "Proveedor externo",
+        pais_origen: "Estados Unidos",
+        requiere_confirmacion: true,
+        costo_importacion: 0,
+        tiempo_configurado_en_ml: handlingTime > 3
+      };
+    } else {
+      updateData.stock_fisico = {
+        cantidad_disponible: item.available_quantity || 0,
+        ubicacion: "Almacén local",
+        reorder_point: Math.max(1, Math.floor((item.available_quantity || 0) * 0.2)),
+        ultima_actualizacion_stock: new Date(),
+        tiempo_configurado_en_ml: handlingTime > 3
+      };
+    }
+    
+    await Producto.findOneAndUpdate(
+      { ml_id: item.id },
+      { $set: updateData },
+      { new: true }
+    );
+    
+    console.log(`🎯 Producto ${item.id} clasificado como: ${productType} (${handlingTime} días)`);
     }
 
   } catch (error: any) {
@@ -988,4 +1061,41 @@ router.get("/debug/producto/:ml_id", async (req: Request, res: Response) => {
   }
 });
 
+
+
+// Endpoint para forzar actualización de un producto específico
+router.post("/ml/productos/:ml_id/actualizar", async (req: Request, res: Response) => {
+  try {
+    const { ml_id } = req.params;
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    console.log(`🔄 Forzando actualización del producto ${ml_id}...`);
+
+    // Obtener datos frescos de MercadoLibre
+    const { data: item } = await axios.get(
+      `https://api.mercadolibre.com/items/${ml_id}`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+
+    // Usar la misma lógica que el webhook para actualizar
+    await handleItemNotification(`https://api.mercadolibre.com/items/${ml_id}`, token.access_token);
+
+    // Obtener el producto actualizado de la BD
+    const productoActualizado = await Producto.findOne({ ml_id: ml_id });
+
+    res.json({
+      mensaje: "Producto actualizado exitosamente",
+      ml_id: ml_id,
+      producto: productoActualizado
+    });
+
+  } catch (error: any) {
+    console.error(`❌ Error actualizando producto ${req.params.ml_id}:`, error.message);
+    res.status(500).json({ 
+      error: "Error al actualizar el producto", 
+      details: error.message 
+    });
+  }
+});
 
