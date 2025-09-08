@@ -957,3 +957,34 @@ cron.schedule("0 */3 * * *", async () => {
 });
 
 export default router;
+// Endpoint temporal para debuggear campos de ML
+router.get("/debug/producto/:ml_id", async (req: Request, res: Response) => {
+  try {
+    const { ml_id } = req.params;
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    const { data: item } = await axios.get(
+      `https://api.mercadolibre.com/items/${ml_id}`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+
+    res.json({
+      ml_id: ml_id,
+      campos_relevantes: {
+        available_quantity: item.available_quantity,
+        shipping: item.shipping,
+        handling_time: item.shipping?.handling_time,
+        attributes: item.attributes?.filter((attr: any) => 
+          attr.name?.toLowerCase().includes('tiempo') || 
+          attr.name?.toLowerCase().includes('disponibilidad') ||
+          attr.name?.toLowerCase().includes('entrega')
+        )
+      },
+      item_completo: item // Para debug completo
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Error obteniendo datos del producto: " + err.message });
+  }
+});
+
