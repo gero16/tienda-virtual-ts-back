@@ -60,6 +60,7 @@ export interface IProducto extends Document {
     pais_origen: string;
     requiere_confirmacion: boolean;
     costo_importacion?: number;
+    tiempo_configurado_en_ml?: boolean;
   };
   
   // Tiempos de entrega (calculados automáticamente)
@@ -137,7 +138,8 @@ const ProductoSchema = new Schema<IProducto>({
     proveedor: { type: String, default: "" },
     pais_origen: { type: String, default: "Estados Unidos" },
     requiere_confirmacion: { type: Boolean, default: true },
-    costo_importacion: { type: Number, default: 0 }
+    costo_importacion: { type: Number, default: 0 },
+    tiempo_configurado_en_ml: { type: Boolean, default: false }
   },
   
   // Tiempos de entrega (calculados automáticamente)

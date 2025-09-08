@@ -79,81 +79,6 @@ async function handlePriceNotification(resourceUrl: string, accessToken: string)
 }
 
 
-// Función para detectar el tipo de producto (stock físico vs dropshipping)
-function detectProductType(item: any) {
-  const hasStock = item.available_quantity > 0;
-  const hasLongHandling = item.shipping?.handling_time?.value >= 15;
-  const hasShortHandling = item.shipping?.handling_time?.value > 0 && item.shipping?.handling_time?.value < 15;
-  
-  // Lógica de detección
-  if (hasStock && !hasLongHandling) {
-    return 'stock_fisico';
-  } else if (!hasStock && hasLongHandling) {
-    return 'dropshipping';
-  } else if (hasStock && hasLongHandling) {
-    return 'mixto'; // Tiene stock pero también maneja pedidos especiales
-  } else {
-    return 'stock_fisico'; // Por defecto
-  }
-}
-
-// Función para calcular tiempos de entrega
-function calculateDeliveryTimes(item: any, tipoVenta: string) {
-  const handlingDays = item.shipping?.handling_time?.value || 0;
-  const shippingDays = 7; // Días promedio de envío
-  
-  let tiempoTotal = 0;
-  let tiempoTexto = "";
-  
-  switch (tipoVenta) {
-    case 'stock_fisico':
-      tiempoTotal = handlingDays + shippingDays;
-      tiempoTexto = `${handlingDays} días de preparación + ${shippingDays} días de envío`;
-      break;
-    case 'dropshipping':
-      tiempoTotal = handlingDays + shippingDays;
-      tiempoTexto = `${handlingDays} días de importación + ${shippingDays} días de envío`;
-      break;
-    case 'mixto':
-      tiempoTotal = Math.max(handlingDays, 3) + shippingDays; // Mínimo 3 días si hay stock
-      tiempoTexto = `${Math.max(handlingDays, 3)} días de preparación + ${shippingDays} días de envío`;
-      break;
-    default:
-      tiempoTotal = 7;
-      tiempoTexto = "7 días de envío";
-  }
-  
-  return {
-    tiempo_entrega_total: tiempoTotal,
-    tiempo_entrega_texto: tiempoTexto
-  };
-}
-
-// Función para extraer información de dropshipping
-function extractDropshippingInfo(item: any) {
-  const handlingDays = item.shipping?.handling_time?.value || 0;
-  
-  return {
-    dias_preparacion: handlingDays,
-    dias_envio_estimado: 7,
-    proveedor: "Proveedor Principal", // Se puede personalizar
-    pais_origen: "Estados Unidos", // Se puede extraer de atributos
-    requiere_confirmacion: true,
-    costo_importacion: 0 // Se puede calcular basado en precio
-  };
-}
-
-// Función para extraer información de stock físico
-function extractStockInfo(item: any) {
-  return {
-    cantidad_disponible: item.available_quantity || 0,
-    ubicacion: "Depósito Principal", // Se puede personalizar
-    reorder_point: 5, // Punto de reorden por defecto
-    ultima_actualizacion_stock: new Date()
-  };
-}
-
-
 // Función auxiliar para detectar cambios específicos en variantes
 async function detectVariantChanges(productId: string, newVariations: any[]) {
   const producto = await Producto.findOne({ ml_id: productId }).populate('variantes');
@@ -183,97 +108,64 @@ async function detectVariantChanges(productId: string, newVariations: any[]) {
   };
 }
 
-
 async function handleItemNotification(resourceUrl: string, accessToken: string) {
   try {
-    const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
-    const { data: item } = await axios.get(fullUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+  const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
+  const { data: item } = await axios.get(fullUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
 
     console.log(`🔄 Procesando notificación para item: ${item.id}`);
 
-    // Obtener descripción por separado
-    let description = "";
-    try {
-      const descResponse = await axios.get(`https://api.mercadolibre.com/items/${item.id}/description`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      description = descResponse.data.plain_text || "";
-    } catch (error) {
-      console.log("⚠️ No se pudo obtener la descripción para:", item.id);
-    }
-
-    // 🆕 DETECCIÓN DE TIPO DE PRODUCTO
-    const tipoVenta = detectProductType(item);
-    const deliveryTimes = calculateDeliveryTimes(item, tipoVenta);
-    
-    console.log(`📦 Tipo de producto detectado: ${tipoVenta}`);
-    console.log(`⏰ Tiempo de entrega: ${deliveryTimes.tiempo_entrega_texto}`);
-
-    // Preparar datos de dropshipping o stock según el tipo
-    let dropshippingData = {};
-    let stockData = {};
-    
-    if (tipoVenta === 'dropshipping' || tipoVenta === 'mixto') {
-      dropshippingData = extractDropshippingInfo(item);
-      console.log(`🚢 Datos de dropshipping: ${JSON.stringify(dropshippingData)}`);
-    }
-    
-    if (tipoVenta === 'stock_fisico' || tipoVenta === 'mixto') {
-      stockData = extractStockInfo(item);
-      console.log(`📦 Datos de stock: ${JSON.stringify(stockData)}`);
-    }
+  // Obtener descripción por separado
+  let description = "";
+  try {
+    const descResponse = await axios.get(`https://api.mercadolibre.com/items/${item.id}/description`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    description = descResponse.data.plain_text || "";
+  } catch (error) {
+    console.log("⚠️ No se pudo obtener la descripción para:", item.id);
+  }
 
     // --- Actualizar/Crear Producto ---
     let producto = await Producto.findOneAndUpdate(
-      { ml_id: item.id },
-      {
-        ml_id: item.id,
-        title: item.title,
-        price: item.price,
-        available_quantity: item.available_quantity,
-        status: item.status,
-        // Imágenes en mejor calidad
-        images: item.pictures?.map((picture: any) => ({
-          id: picture.id,
-          url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
-          max_size: picture.max_size
-        })) || [],
-        // Información adicional
-        description: description,
-        sold_quantity: item.sold_quantity || 0,
-        warranty: item.warranty || "",
-        attributes: item.attributes || [],
-        tags: item.tags || [],
-        category_id: item.category_id || "",
-        condition: item.condition || "",
-        listing_type_id: item.listing_type_id || "",
-        shipping: item.shipping || {},
-        health: item.health || 0,
-        // Métricas
-        metrics: {
-          visits: item.visits || 0,
-          reviews: {
-            rating_average: item.reviews?.rating_average || 0,
-            total: item.reviews?.total || 0
-          }
-        },
-        // Fechas importantes
-        date_created: item.date_created ? new Date(item.date_created) : new Date(),
-        last_updated: item.last_updated ? new Date(item.last_updated) : new Date(),
-        
-        // 🆕 NUEVOS CAMPOS PARA DROPSHIPPING
-        tipo_venta: tipoVenta,
-        tiempo_entrega_total: deliveryTimes.tiempo_entrega_total,
-        tiempo_entrega_texto: deliveryTimes.tiempo_entrega_texto,
-        es_importacion: tipoVenta === 'dropshipping',
-        requiere_stock_especial: tipoVenta === 'dropshipping' || tipoVenta === 'mixto',
-        
-        // Datos específicos según el tipo
-        ...(Object.keys(dropshippingData).length > 0 && { dropshipping: dropshippingData }),
-        ...(Object.keys(stockData).length > 0 && { stock_fisico: stockData })
+    { ml_id: item.id },
+    {
+      ml_id: item.id,
+      title: item.title,
+      price: item.price,
+      available_quantity: item.available_quantity,
+      status: item.status,
+      // Imágenes en mejor calidad
+      images: item.pictures?.map((picture: any) => ({
+        id: picture.id,
+        url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
+        max_size: picture.max_size
+      })) || [],
+      // Información adicional
+      description: description,
+      sold_quantity: item.sold_quantity || 0,
+      warranty: item.warranty || "",
+      attributes: item.attributes || [],
+      tags: item.tags || [],
+      category_id: item.category_id || "",
+      condition: item.condition || "",
+      listing_type_id: item.listing_type_id || "",
+      shipping: item.shipping || {},
+      health: item.health || 0,
+      // Métricas
+      metrics: {
+        visits: item.visits || 0,
+        reviews: {
+          rating_average: item.reviews?.rating_average || 0,
+          total: item.reviews?.total || 0
+        }
       },
+      // Fechas importantes
+      date_created: item.date_created ? new Date(item.date_created) : new Date(),
+      last_updated: item.last_updated ? new Date(item.last_updated) : new Date()
+    },
       { upsert: true, new: true }
     );
 
@@ -358,7 +250,6 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
     throw error;
   }
 }
-
 async function handleOrderNotification(resourceUrl: string, accessToken: string) {
   try {
     const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
@@ -1066,150 +957,3 @@ cron.schedule("0 */3 * * *", async () => {
 });
 
 export default router;
-// -------------------- NUEVOS ENDPOINTS PARA DROPSHIPPING --------------------
-
-// Endpoint para obtener productos por tipo de venta
-router.get("/productos/tipo/:tipo", async (req: Request, res: Response) => {
-  try {
-    const { tipo } = req.params;
-    const validTypes = ['stock_fisico', 'dropshipping', 'mixto'];
-    
-    if (!validTypes.includes(tipo)) {
-      return res.status(400).json({ 
-        error: "Tipo inválido. Tipos válidos: stock_fisico, dropshipping, mixto" 
-      });
-    }
-    
-    const productos = await Producto.find({ 
-      tipo_venta: tipo,
-      es_producto_base: true 
-    }).populate("variantes");
-    
-    res.json({
-      message: `Productos de tipo ${tipo} obtenidos exitosamente`,
-      tipo: tipo,
-      count: productos.length,
-      productos: productos
-    });
-  } catch (err: any) {
-    res.status(500).send("❌ Error al obtener productos por tipo: " + err.message);
-  }
-});
-
-// Endpoint para obtener productos de dropshipping
-router.get("/productos/dropshipping", async (req: Request, res: Response) => {
-  try {
-    const productos = await Producto.find({ 
-      tipo_venta: { $in: ['dropshipping', 'mixto'] },
-      es_producto_base: true 
-    }).populate("variantes");
-    
-    res.json({
-      message: "Productos de dropshipping obtenidos exitosamente",
-      count: productos.length,
-      productos: productos
-    });
-  } catch (err: any) {
-    res.status(500).send("❌ Error al obtener productos de dropshipping: " + err.message);
-  }
-});
-
-// Endpoint para obtener productos con stock físico
-router.get("/productos/stock-fisico", async (req: Request, res: Response) => {
-  try {
-    const productos = await Producto.find({ 
-      tipo_venta: { $in: ['stock_fisico', 'mixto'] },
-      es_producto_base: true 
-    }).populate("variantes");
-    
-    res.json({
-      message: "Productos con stock físico obtenidos exitosamente",
-      count: productos.length,
-      productos: productos
-    });
-  } catch (err: any) {
-    res.status(500).send("❌ Error al obtener productos con stock físico: " + err.message);
-  }
-});
-
-// Endpoint para obtener estadísticas de dropshipping
-router.get("/productos/estadisticas-dropshipping", async (req: Request, res: Response) => {
-  try {
-    const totalProductos = await Producto.countDocuments({ es_producto_base: true });
-    const productosStockFisico = await Producto.countDocuments({ 
-      tipo_venta: 'stock_fisico',
-      es_producto_base: true 
-    });
-    const productosDropshipping = await Producto.countDocuments({ 
-      tipo_venta: 'dropshipping',
-      es_producto_base: true 
-    });
-    const productosMixtos = await Producto.countDocuments({ 
-      tipo_venta: 'mixto',
-      es_producto_base: true 
-    });
-    
-    // Estadísticas de tiempos de entrega
-    const productosConTiempoLargo = await Producto.countDocuments({
-      tiempo_entrega_total: { $gte: 15 },
-      es_producto_base: true
-    });
-    
-    const productosImportacion = await Producto.countDocuments({
-      es_importacion: true,
-      es_producto_base: true
-    });
-    
-    res.json({
-      message: "Estadísticas de dropshipping obtenidas exitosamente",
-      estadisticas: {
-        total_productos: totalProductos,
-        productos_stock_fisico: productosStockFisico,
-        productos_dropshipping: productosDropshipping,
-        productos_mixtos: productosMixtos,
-        productos_tiempo_largo: productosConTiempoLargo,
-        productos_importacion: productosImportacion,
-        porcentaje_dropshipping: totalProductos > 0 ? Math.round((productosDropshipping / totalProductos) * 100) : 0
-      }
-    });
-  } catch (err: any) {
-    res.status(500).send("❌ Error al obtener estadísticas de dropshipping: " + err.message);
-  }
-});
-
-// Endpoint para actualizar manualmente el tipo de un producto
-router.put("/productos/:id/tipo", async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { tipo_venta } = req.body;
-    
-    const validTypes = ['stock_fisico', 'dropshipping', 'mixto'];
-    if (!validTypes.includes(tipo_venta)) {
-      return res.status(400).json({ 
-        error: "Tipo inválido. Tipos válidos: stock_fisico, dropshipping, mixto" 
-      });
-    }
-    
-    const producto = await Producto.findByIdAndUpdate(
-      id,
-      { 
-        tipo_venta: tipo_venta,
-        es_importacion: tipo_venta === 'dropshipping',
-        requiere_stock_especial: tipo_venta === 'dropshipping' || tipo_venta === 'mixto'
-      },
-      { new: true }
-    );
-    
-    if (!producto) {
-      return res.status(404).json({ error: "Producto no encontrado" });
-    }
-    
-    res.json({
-      message: "Tipo de producto actualizado exitosamente",
-      producto: producto
-    });
-  } catch (err: any) {
-    res.status(500).send("❌ Error al actualizar tipo de producto: " + err.message);
-  }
-});
-
