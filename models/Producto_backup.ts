@@ -37,9 +37,6 @@ export interface IProducto extends Document {
     };
   };
   variantes: Types.ObjectId[] | IVariante[];
-  // 🆕 NUEVOS CAMPOS
-  tipo: 'producto_base' | 'variante_individual';
-  es_producto_base: boolean;
 }
 
 const ProductoSchema = new Schema<IProducto>({
@@ -78,13 +75,6 @@ const ProductoSchema = new Schema<IProducto>({
     }
   },
   variantes: [{ type: Schema.Types.ObjectId, ref: "Variante" }],
-  // 🆕 NUEVOS CAMPOS
-  tipo: { 
-    type: String, 
-    enum: ['producto_base', 'variante_individual'], 
-    default: 'producto_base' 
-  },
-  es_producto_base: { type: Boolean, default: true }
 });
 
 export default model<IProducto>("Producto", ProductoSchema);
