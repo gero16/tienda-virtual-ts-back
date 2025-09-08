@@ -108,8 +108,6 @@ async function detectVariantChanges(productId: string, newVariations: any[]) {
   };
 }
 
-async function handleItemNotification(resourceUrl: string, accessToken: string) {
-
 // Función para calcular tiempos de entrega
 function calculateDeliveryTimes(productType: string, mlHandlingTime: number | undefined) {
   const handlingTime = mlHandlingTime || 3;
@@ -133,6 +131,8 @@ function calculateDeliveryTimes(productType: string, mlHandlingTime: number | un
   }
 }
 
+
+async function handleItemNotification(resourceUrl: string, accessToken: string) {
   try {
   const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
   const { data: item } = await axios.get(fullUrl, {
@@ -267,8 +267,9 @@ function calculateDeliveryTimes(productType: string, mlHandlingTime: number | un
       console.log(`✅ Producto ${item.id} actualizado con ${varianteIds.length} variantes`);
     } else {
       console.log(`📦 Producto ${item.id} sin variantes`);
+    }
 
-    // --- 🚀 LÓGICA DE DROPSHIPPING ---
+    // --- 🚀 LÓGICA DE DROPSHIPPING (APLICADA A TODOS LOS PRODUCTOS) ---
     const manufacturingTime = item.sale_terms?.find((term: any) => 
       term.id === "MANUFACTURING_TIME"
     );
@@ -316,7 +317,12 @@ function calculateDeliveryTimes(productType: string, mlHandlingTime: number | un
     );
     
     console.log(`🎯 Producto ${item.id} clasificado como: ${productType} (${handlingTime} días)`);
-    }
+    await Producto.findOneAndUpdate(
+      { ml_id: item.id },
+      { $set: updateData },
+      { new: true }
+    );
+    
 
   } catch (error: any) {
     console.error(`❌ Error en handleItemNotification para ${resourceUrl}:`, error.message);
@@ -620,6 +626,55 @@ async function forceUpdateProductos() {
       }
 
       console.log(`✅ Producto ${itemId} sincronizado correctamente`);
+
+      // --- 🚀 LÓGICA DE DROPSHIPPING ---
+      const manufacturingTime = itemDetail.sale_terms?.find((term: any) => 
+        term.id === "MANUFACTURING_TIME"
+      );
+      
+      let handlingTime = 3; // Default para stock físico
+      
+      if (manufacturingTime?.value_struct?.number) {
+        handlingTime = manufacturingTime.value_struct.number;
+      }
+      
+      const productType = handlingTime > 14 ? "dropshipping" : "stock_fisico";
+      const deliveryTimes = calculateDeliveryTimes(productType, handlingTime);
+      
+      // Actualizar producto con información de dropshipping
+      const updateData: any = {
+        tipo_venta: productType,
+        tiempo_entrega_total: deliveryTimes.total,
+        tiempo_entrega_texto: deliveryTimes.texto
+      };
+      
+      if (productType === "dropshipping") {
+        updateData.dropshipping = {
+          dias_preparacion: handlingTime,
+          dias_envio_estimado: 7,
+          proveedor: "Proveedor externo",
+          pais_origen: "Estados Unidos",
+          requiere_confirmacion: true,
+          costo_importacion: 0,
+          tiempo_configurado_en_ml: handlingTime > 3
+        };
+      } else {
+        updateData.stock_fisico = {
+          cantidad_disponible: itemDetail.available_quantity || 0,
+          ubicacion: "Almacén local",
+          reorder_point: Math.max(1, Math.floor((itemDetail.available_quantity || 0) * 0.2)),
+          ultima_actualizacion_stock: new Date(),
+          tiempo_configurado_en_ml: handlingTime > 3
+        };
+      }
+      
+      await Producto.findOneAndUpdate(
+        { ml_id: itemDetail.id },
+        { $set: updateData },
+        { new: true }
+      );
+      
+      console.log(`🎯 Producto ${itemId} clasificado como: ${productType} (${handlingTime} días)`);
       
       // Pequeña pausa para no saturar la API
       await new Promise(resolve => setTimeout(resolve, 200));
