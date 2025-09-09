@@ -849,6 +849,7 @@ router.get('/productos/:id', async (req: Request, res: Response)  => {
   } catch (error) {
     res.status(500).json({ error: 'Error al obtener el producto' });
   }
+});
 
 // -------------------- NUEVOS ENDPOINTS PARA PRODUCTOS BASE --------------------
 
@@ -932,76 +933,24 @@ router.get("/productos/estadisticas", async (req: Request, res: Response) => {
   }
 });
 
-// Función para detectar y limpiar productos eliminados de MercadoLibre
-async function detectAndCleanupDeletedProducts() {
+// Endpoint para productos tipo dropshipping con más de 14 días
+router.get("/productos/tipo/dropshipping", async (req: Request, res: Response) => {
   try {
-    console.log("🧹 Iniciando limpieza de productos eliminados...");
-    
-    const token = await getCurrentToken();
-    if (!token) throw new Error("No autenticado");
+    const productosDropshipping = await Producto.find({
+      tipo_venta: "dropshipping",
+      "dropshipping.dias_preparacion": { $gt: 14 }
+    }).populate("variantes");
 
-    // Obtener productos de MercadoLibre
-    const itemsResponse = await axios.get(
-      `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
-      { headers: { Authorization: `Bearer ${token.access_token}` } }
-    );
-    
-    const mlProductIds = itemsResponse.data.results || [];
-    console.log(`📊 Productos en MercadoLibre: ${mlProductIds.length}`);
-
-    // Obtener productos de la base de datos
-    const dbProducts = await Producto.find({});
-    console.log(`📊 Productos en base de datos: ${dbProducts.length}`);
-
-    // Encontrar productos eliminados (en DB pero no en ML)
-    const dbProductIds = dbProducts.map(p => p.ml_id);
-    const deletedProductIds = dbProductIds.filter(id => !mlProductIds.includes(id));
-
-    if (deletedProductIds.length === 0) {
-      console.log("✅ No se encontraron productos eliminados");
-      return {
-        message: "No se encontraron productos eliminados",
-        deleted_count: 0,
-        deleted_products: []
-      };
-    }
-
-    console.log(`🗑️ Productos eliminados detectados: ${deletedProductIds.length}`);
-    console.log(`📋 IDs eliminados: ${deletedProductIds.join(', ')}`);
-
-    // Obtener información de los productos antes de eliminarlos
-    const deletedProducts = await Producto.find({ ml_id: { $in: deletedProductIds } });
-    const deletedProductsInfo = deletedProducts.map(p => ({
-      ml_id: p.ml_id,
-      title: p.title,
-      _id: p._id
-    }));
-
-    // Eliminar productos de la base de datos
-    const deleteResult = await Producto.deleteMany({ ml_id: { $in: deletedProductIds } });
-    
-    // También eliminar variantes asociadas
-    const deletedProductObjectIds = deletedProducts.map(p => p._id);
-    const variantesResult = await Variante.deleteMany({ 
-      product_id: { $in: deletedProductObjectIds } 
+    res.json({
+      message: "Productos dropshipping obtenidos exitosamente",
+      total_productos: productosDropshipping.length,
+      productos: productosDropshipping
     });
-
-    console.log(`✅ Limpieza completada:`);
-    console.log(`   • Productos eliminados: ${deleteResult.deletedCount}`);
-    console.log(`   • Variantes eliminadas: ${variantesResult.deletedCount}`);
-
-    return {
-      message: "Limpieza completada exitosamente",
-      deleted_count: deleteResult.deletedCount,
-      deleted_products: deletedProductsInfo,
-      deleted_variantes: variantesResult.deletedCount
-    };
-
-  } catch (error: any) {
-    console.error("❌ Error en limpieza de productos:", error.message);
-    throw error;
+  } catch (err: any) {
+    res.status(500).send("❌ Error al obtener productos dropshipping: " + err.message);
   }
-}
+});
+
 
 // Endpoint manual para limpiar productos eliminados
 router.post("/sync/cleanup", async (req: Request, res: Response) => {
@@ -1069,7 +1018,6 @@ router.get("/sync/cleanup/preview", async (req: Request, res: Response) => {
       error: "Error generando preview de limpieza: " + err.message 
     });
   }
-});
 
 
 });
