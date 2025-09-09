@@ -231,27 +231,67 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
 
         console.log(`🔧 Procesando variante ${variante.id}: Color=${color}, Talla=${size}, Stock=${variante.available_quantity}`);
 
+        // 🆕 CALCULAR INFORMACIÓN DE DROPSHIPPING PARA LA VARIANTE
+        // Usar la misma información ya calculada para el producto
+        const manufacturingTime = item.sale_terms?.find((term: any) => 
+          term.id === "MANUFACTURING_TIME"
+        );
+        
+        let handlingTime = 3; // Default para stock físico
+        
+        if (manufacturingTime?.value_struct?.number) {
+          handlingTime = manufacturingTime.value_struct.number;
+        }
+        
+        const varianteProductType = handlingTime > 14 ? "dropshipping" : "stock_fisico";
+        const varianteDeliveryTimes = calculateDeliveryTimes(varianteProductType, handlingTime);
+        
+        const varianteUpdateData: any = {
+          id: variante.id.toString(),
+          product_id: producto._id,
+          color,
+          size,
+          stock: variante.available_quantity,
+          price: variante.price || item.price,
+          images: variante.picture_ids?.map((id: string) => ({
+            id: id,
+            url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
+            high_quality: `https://http2.mlstatic.com/D_${id}-O.jpg`
+          })) || [],
+          attribute_combinations: variante.attribute_combinations?.map((attr: any) => ({
+            id: attr.id,
+            name: attr.name,
+            value_id: attr.value_id,
+            value_name: attr.value_name
+          })) || [],
+          // 🚀 CAMPOS DE DROPSHIPPING PARA VARIANTE
+          tipo_venta: varianteProductType,
+          tiempo_entrega_total: varianteDeliveryTimes.total,
+          tiempo_entrega_texto: varianteDeliveryTimes.texto
+        };
+        
+        if (varianteProductType === "dropshipping") {
+          varianteUpdateData.dropshipping = {
+            dias_preparacion: handlingTime,
+            dias_envio_estimado: 7,
+            proveedor: "Proveedor externo",
+            pais_origen: "Estados Unidos",
+            requiere_confirmacion: true,
+            costo_importacion: 0,
+            tiempo_configurado_en_ml: handlingTime > 3
+          };
+        } else {
+          varianteUpdateData.stock_fisico = {
+            cantidad_disponible: variante.available_quantity || 0,
+            ubicacion: "Almacén local",
+            reorder_point: Math.max(1, Math.floor((variante.available_quantity || 0) * 0.2)),
+            ultima_actualizacion_stock: new Date()
+          };
+        }
+
         const savedVariante = await Variante.findOneAndUpdate(
           { id: variante.id.toString() },
-          {
-            id: variante.id.toString(),
-            product_id: producto._id,
-            color,
-            size,
-            stock: variante.available_quantity,
-            price: variante.price || item.price,
-            images: variante.picture_ids?.map((id: string) => ({
-              id: id,
-              url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
-              high_quality: `https://http2.mlstatic.com/D_${id}-O.jpg`
-            })) || [],
-            attribute_combinations: variante.attribute_combinations?.map((attr: any) => ({
-              id: attr.id,
-              name: attr.name,
-              value_id: attr.value_id,
-              value_name: attr.value_name
-            })) || []
-          },
+          varianteUpdateData,
           { upsert: true, new: true }
         );
 
@@ -936,15 +976,25 @@ router.get("/productos/estadisticas", async (req: Request, res: Response) => {
 // Endpoint para productos tipo dropshipping con más de 14 días
 router.get("/productos/tipo/dropshipping", async (req: Request, res: Response) => {
   try {
+    // Buscar productos base con dropshipping > 14 días
     const productosDropshipping = await Producto.find({
       tipo_venta: "dropshipping",
       "dropshipping.dias_preparacion": { $gt: 14 }
     }).populate("variantes");
 
+    // Buscar variantes con dropshipping > 14 días
+    const variantesDropshipping = await Variante.find({
+      tipo_venta: "dropshipping",
+      "dropshipping.dias_preparacion": { $gt: 14 }
+    }).populate("product_id");
+
     res.json({
-      message: "Productos dropshipping obtenidos exitosamente",
+      message: "Productos y variantes dropshipping obtenidos exitosamente",
       total_productos: productosDropshipping.length,
-      productos: productosDropshipping
+      total_variantes: variantesDropshipping.length,
+      total_items: productosDropshipping.length + variantesDropshipping.length,
+      productos_base: productosDropshipping,
+      variantes_individuales: variantesDropshipping
     });
   } catch (err: any) {
     res.status(500).send("❌ Error al obtener productos dropshipping: " + err.message);
