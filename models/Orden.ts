@@ -4,6 +4,7 @@ export interface IOrden extends Document {
   // Información de la orden
   orden_id: string;
   external_reference: string;
+  numero_orden?: string; // 🆕 Campo que falta en la DB
   
   // Información del pago
   payment_id: string;
@@ -61,6 +62,7 @@ export interface IOrden extends Document {
 const OrdenSchema = new Schema<IOrden>({
   orden_id: { type: String, required: true, unique: true },
   external_reference: { type: String, required: true },
+  numero_orden: { type: String, unique: true, sparse: true }, // 🆕 Campo único pero opcional
   
   // Información del pago
   payment_id: { type: String, required: true },

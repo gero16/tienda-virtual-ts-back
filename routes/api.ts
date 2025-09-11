@@ -475,6 +475,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       const ordenData = {
         orden_id: `ORD-${Date.now()}`,
         external_reference: external_reference || `ORDER-${Date.now()}`,
+        numero_orden: `ORD-${Date.now()}`, // 🆕 Agregar numero_orden
         
         // Información del pago
         payment_id: response.body.id.toString(),
