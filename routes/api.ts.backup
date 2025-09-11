@@ -471,7 +471,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     console.log(colors.green(`   Status Detail: ${response.body.status_detail}`));
 
     // 🆕 FUNCIONES DE TRANSFORMACIÓN DE DATOS
-    const transformCustomerData = (customer: any) => {
+    const transformCustomerData = (customer) => {
       if (!customer) {
         return {
           name: "Cliente",
@@ -505,7 +505,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       };
     };
 
-    const transformItemsData = (items: any) => {
+    const transformItemsData = (items) => {
       if (!items || !Array.isArray(items)) {
         return [];
       }
@@ -539,6 +539,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         
         // Información del cliente
         customer: transformCustomerData(customer),
+        }
         
         // Productos comprados
         items: transformItemsData(items),
