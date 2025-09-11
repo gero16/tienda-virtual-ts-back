@@ -2,6 +2,7 @@ import mercadopago from "mercadopago";
 import express, { Router, Request, Response } from "express";
 import colors from "colors";
 import ProductoModel from "../models/products-model";
+import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 
 const router = Router();
 
@@ -356,6 +357,61 @@ router.get("/productos", async (req: Request, res: Response) => {
 });
 
 // =====================
+// Obtener todas las órdenes
+// =====================
+router.get("/orders", async (req: Request, res: Response) => {
+  try {
+    const orders = await Orden.find()
+      .sort({ date_created: -1 })
+      .limit(50);
+    
+    return res.json({
+      success: true,
+      count: orders.length,
+      orders
+    });
+  } catch (error: any) {
+    console.error(colors.red("❌ Error obteniendo órdenes:"), error);
+    return res.status(500).json({ 
+      error: "Error obteniendo órdenes", 
+      message: error.message 
+    });
+  }
+});
+
+// =====================
+// Obtener una orden específica
+// =====================
+router.get("/orders/:id", async (req: Request, res: Response) => {
+  try {
+    const order = await Orden.findOne({ 
+      $or: [
+        { orden_id: req.params.id },
+        { payment_id: req.params.id },
+        { external_reference: req.params.id }
+      ]
+    });
+    
+    if (!order) {
+      return res.status(404).json({ 
+        error: "Orden no encontrada" 
+      });
+    }
+    
+    return res.json({
+      success: true,
+      order
+    });
+  } catch (error: any) {
+    console.error(colors.red("❌ Error obteniendo orden:"), error);
+    return res.status(500).json({ 
+      error: "Error obteniendo orden", 
+      message: error.message 
+    });
+  }
+});
+
+// =====================
 // Procesar pagos con Payment Brick
 // =====================
 router.post("/process_payment", async (req: Request, res: Response) => {
@@ -372,7 +428,11 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       description, 
       installments, 
       payment_method_id, 
-      payer 
+      payer,
+      // 🆕 Nuevos campos para guardar la orden
+      items,
+      customer,
+      external_reference
     } = req.body;
 
     // Validar datos requeridos
@@ -409,6 +469,58 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     console.log(colors.green(`   ID: ${response.body.id}`));
     console.log(colors.green(`   Status: ${response.body.status}`));
     console.log(colors.green(`   Status Detail: ${response.body.status_detail}`));
+
+    // 🆕 GUARDAR LA ORDEN EN LA BASE DE DATOS
+    try {
+      const ordenData = {
+        orden_id: `ORD-${Date.now()}`,
+        external_reference: external_reference || `ORDER-${Date.now()}`,
+        
+        // Información del pago
+        payment_id: response.body.id.toString(),
+        payment_status: response.body.status,
+        payment_status_detail: response.body.status_detail,
+        transaction_amount: response.body.transaction_amount,
+        payment_method_id: response.body.payment_method_id,
+        installments: response.body.installments,
+        
+        // Información del cliente
+        customer: customer || {
+          name: payer?.name || "Cliente",
+          email: payer?.email || "test@example.com",
+          phone: payer?.phone || "099999999",
+          address: payer?.address || "Dirección no especificada",
+          city: payer?.city || "Ciudad",
+          state: payer?.state || "Estado"
+        },
+        
+        // Productos comprados
+        items: items || [],
+        
+        // Totales
+        subtotal: transaction_amount,
+        total: transaction_amount,
+        currency: 'UYU',
+        
+        // Fechas
+        date_created: new Date(),
+        date_approved: response.body.date_approved ? new Date(response.body.date_approved) : undefined,
+        
+        // Estado
+        status: response.body.status === 'approved' ? 'approved' : 'pending'
+      };
+
+      const nuevaOrden = new Orden(ordenData);
+      await nuevaOrden.save();
+      
+      console.log(colors.green("💾 Orden guardada en la base de datos:"));
+      console.log(colors.green(`   Orden ID: ${nuevaOrden.orden_id}`));
+      console.log(colors.green(`   Payment ID: ${nuevaOrden.payment_id}`));
+      
+    } catch (dbError) {
+      console.error(colors.red("❌ Error guardando orden en la DB:"), dbError);
+      // No fallar el pago por error de DB, solo loggear
+    }
 
     return res.json({
       id: response.body.id,
