@@ -356,6 +356,90 @@ router.get("/productos", async (req: Request, res: Response) => {
 });
 
 // =====================
+// Procesar pagos con Payment Brick
+// =====================
+router.post("/process_payment", async (req: Request, res: Response) => {
+  try {
+    if (!mpAccessToken) {
+      return res.status(500).json({ 
+        error: "MercadoPago no está configurado. MP_ACCESS_TOKEN no encontrado." 
+      });
+    }
+
+    const { 
+      transaction_amount, 
+      token, 
+      description, 
+      installments, 
+      payment_method_id, 
+      payer 
+    } = req.body;
+
+    // Validar datos requeridos
+    if (!transaction_amount || !token || !payment_method_id) {
+      return res.status(400).json({ 
+        error: "Faltan datos requeridos: transaction_amount, token, payment_method_id" 
+      });
+    }
+
+    console.log(colors.blue("💳 Procesando pago con Payment Brick..."));
+    console.log(colors.blue(`💰 Monto: $${transaction_amount}`));
+    console.log(colors.blue(`💳 Método: ${payment_method_id}`));
+
+    // Crear el objeto de pago para MercadoPago
+    const paymentData = {
+      transaction_amount: Number(transaction_amount),
+      token: token,
+      description: description || "Pago desde tienda virtual",
+      installments: Number(installments) || 1,
+      payment_method_id: payment_method_id,
+      payer: {
+        email: payer?.email || "test@example.com",
+        identification: payer?.identification || {
+          type: "DNI",
+          number: "12345678"
+        }
+      }
+    };
+
+    // Procesar el pago con MercadoPago
+    const response = await mercadopago.payment.save(paymentData);
+    
+    console.log(colors.green("✅ Pago procesado exitosamente:"));
+    console.log(colors.green(`   ID: ${response.body.id}`));
+    console.log(colors.green(`   Status: ${response.body.status}`));
+    console.log(colors.green(`   Status Detail: ${response.body.status_detail}`));
+
+    return res.json({
+      id: response.body.id,
+      status: response.body.status,
+      status_detail: response.body.status_detail,
+      transaction_amount: response.body.transaction_amount,
+      payment_method_id: response.body.payment_method_id,
+      installments: response.body.installments,
+      date_approved: response.body.date_approved,
+      date_created: response.body.date_created
+    });
+
+  } catch (error: any) {
+    console.error(colors.red("❌ Error procesando pago:"), error);
+    
+    // Manejar errores específicos de MercadoPago
+    if (error.response && error.response.data) {
+      return res.status(400).json({ 
+        error: "Error de MercadoPago", 
+        details: error.response.data 
+      });
+    }
+    
+    return res.status(500).json({ 
+      error: "Error interno del servidor", 
+      message: error.message 
+    });
+  }
+});
+
+// =====================
 // Health check endpoint
 // =====================
 router.get("/health", (req: Request, res: Response) => {
