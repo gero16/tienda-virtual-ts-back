@@ -580,9 +580,9 @@ router.post("/process_payment", async (req: Request, res: Response) => {
           console.log(colors.blue("   🔑 Token de ML obtenido, actualizando stock..."));
           
           for (const item of items) {
-            const newStock = item.stock - item.quantity;
+            const newStock = Math.max(0, 10 - item.quantity); // Stock fijo para prueba
             console.log(colors.blue(`   📦 Producto: ${item.product_name}`));
-            console.log(colors.blue(`   📊 Stock actual: ${item.stock} → Nuevo stock: ${newStock}`));
+            console.log(colors.blue(`   📊 Stock fijo: 10 → Nuevo stock: ${newStock}`));
             
             await updateStockInMercadoLibre(item.product_id, newStock, token.access_token);
             console.log(colors.green(`   ✅ Stock actualizado para ${item.product_name}`));
