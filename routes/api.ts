@@ -3,6 +3,7 @@ import express, { Router, Request, Response } from "express";
 import colors from "colors";
 import ProductoModel from "../models/products-model";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
+import { getCurrentToken, updateStockInMercadoLibre } from "./mercadolibre"; // 🆕 Importar funciones de ML
 
 const router = Router();
 
@@ -568,6 +569,36 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       // No fallar el pago por error de DB, solo loggear
     }
 
+    // ✅ ACTUALIZAR STOCK EN MERCADOLIBRE (cualquier status para pruebas)
+    if (response.body.status === 'approved' || response.body.status === 'rejected' || response.body.status === 'pending') {
+      console.log(colors.green("✅ Procesando actualización de stock en MercadoLibre..."));
+      console.log(colors.blue(`   Status del pago: ${response.body.status}`));
+      
+      try {
+        const token = await getCurrentToken();
+        if (token) {
+          console.log(colors.blue("   🔑 Token de ML obtenido, actualizando stock..."));
+          
+          for (const item of items) {
+            const newStock = item.stock - item.quantity;
+            console.log(colors.blue(`   📦 Producto: ${item.product_name}`));
+            console.log(colors.blue(`   📊 Stock actual: ${item.stock} → Nuevo stock: ${newStock}`));
+            
+            await updateStockInMercadoLibre(item.product_id, newStock, token.access_token);
+            console.log(colors.green(`   ✅ Stock actualizado para ${item.product_name}`));
+          }
+          
+          console.log(colors.green("✅ Todos los stocks actualizados en MercadoLibre"));
+        } else {
+          console.log(colors.red("❌ No se pudo obtener token de MercadoLibre"));
+        }
+      } catch (stockError) {
+        console.error(colors.red("❌ Error actualizando stock en ML:"), stockError);
+      }
+    } else {
+      console.log(colors.yellow(`⚠️ Status de pago no reconocido: ${response.body.status}`));
+    }
+
     return res.json({
       id: response.body.id,
       status: response.body.status,
@@ -610,3 +641,48 @@ router.get("/health", (req: Request, res: Response) => {
 });
 
 export default router;
+// =====================
+// Endpoint de prueba para actualizar stock
+// =====================
+router.post("/test/update-stock", async (req: Request, res: Response) => {
+  try {
+    const { product_id, new_stock } = req.body;
+    
+    if (!product_id || new_stock === undefined) {
+      return res.status(400).json({ 
+        error: "Se requiere product_id y new_stock" 
+      });
+    }
+
+    console.log(colors.blue("🧪 Probando actualización de stock..."));
+    console.log(colors.blue(`📦 Producto ID: ${product_id}`));
+    console.log(colors.blue(`📊 Nuevo stock: ${new_stock}`));
+
+    const token = await getCurrentToken();
+    if (!token) {
+      return res.status(500).json({ 
+        error: "No se pudo obtener token de MercadoLibre" 
+      });
+    }
+
+    const result = await updateStockInMercadoLibre(product_id, new_stock, token.access_token);
+    
+    console.log(colors.green("✅ Stock actualizado exitosamente en MercadoLibre"));
+    
+    return res.json({
+      success: true,
+      message: "Stock actualizado exitosamente",
+      product_id,
+      new_stock,
+      mercadolibre_response: result
+    });
+
+  } catch (error: any) {
+    console.error(colors.red("❌ Error en prueba de stock:"), error);
+    return res.status(500).json({ 
+      error: "Error actualizando stock", 
+      details: error.message 
+    });
+  }
+});
+

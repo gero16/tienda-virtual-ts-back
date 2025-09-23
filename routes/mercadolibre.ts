@@ -1082,6 +1082,36 @@ cron.schedule("0 */3 * * *", async () => {
   }
 });
 
+// =====================
+// Función para actualizar stock en MercadoLibre
+// =====================
+export async function updateStockInMercadoLibre(itemId: string, newStock: number, accessToken: string) {
+  try {
+    console.log(`📦 Actualizando stock para producto ${itemId} a ${newStock} en MercadoLibre...`);
+    
+    const response = await axios.put(
+      `https://api.mercadolibre.com/items/${itemId}`,
+      {
+        available_quantity: newStock,
+      },
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    
+    console.log(`✅ Stock de ${itemId} actualizado en ML: ${response.data.available_quantity}`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`❌ Error al actualizar stock de ${itemId} en MercadoLibre:`, error.response?.data || error.message);
+    throw error;
+  }
+}
+
+// =====================
+// Exportar funciones para uso en otros módulos
+// =====================
+export { getCurrentToken };
+
 export default router;
 // Endpoint temporal para debuggear campos de ML
 router.get("/debug/producto/:ml_id", async (req: Request, res: Response) => {
