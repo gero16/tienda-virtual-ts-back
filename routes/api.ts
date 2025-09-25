@@ -4,7 +4,7 @@ import colors from "colors";
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 import { getCurrentToken, updateStockInMercadoLibre } from "./mercadolibre"; // 🆕 Importar funciones de ML
-import Variante from "../models/Variante"; // �� Importar el modelo de Variante
+import Variante from "../models/Variante"; // 🆕 Importar el modelo de Variante
 
 const router = Router();
 
@@ -507,7 +507,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       };
     };
 
-    const transformItemsData = async (items: any) => {
+        const transformItemsData = async (items: any) => {
       if (!items || !Array.isArray(items)) {
         return [];
       }
@@ -517,22 +517,34 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       for (const item of items) {
         let mlId = item.id?.toString();
         
+        console.log(`🔍 Debug item:`, {
+          id: item.id,
+          title: item.title,
+          name: item.name,
+          variant_id: item.variant_id
+        });
+        
         // Si el item.id no es un ml_id, buscar en la base de datos
         if (item.id && !item.id.toString().startsWith('MLA')) {
+          console.log(`🔍 Buscando ml_id para item ${item.id}`);
           try {
             // Buscar como producto principal
             const producto = await ProductoModel.findOne({ _id: item.id });
+            console.log(`🔍 Producto encontrado:`, producto ? { _id: producto._id, ml_id: producto.ml_id } : 'No encontrado');
             if (producto && producto.ml_id) {
               mlId = producto.ml_id;
+              console.log(`✅ ml_id encontrado en producto: ${mlId}`);
             } else {
               // Buscar como variante
               const variante = await Variante.findOne({ _id: item.id });
+              console.log(`🔍 Variante encontrada:`, variante ? { _id: variante._id, id: variante.id } : 'No encontrada');
               if (variante && variante.id) {
                 mlId = variante.id;
+                console.log(`✅ ml_id encontrado en variante: ${mlId}`);
               }
             }
-          } catch (dbError) {
-            console.log(`⚠️ No se pudo encontrar ml_id para item ${item.id}`);
+          } catch (dbError: any) {
+            console.log(`⚠️ Error buscando ml_id para item ${item.id}:`, dbError.message);
           }
         }
 
