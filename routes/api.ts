@@ -3,7 +3,7 @@ import express, { Router, Request, Response } from "express";
 import colors from "colors";
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
-import { getCurrentToken, updateStockInMercadoLibre } from "./mercadolibre"; // 🆕 Importar funciones de ML
+import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre } from "./mercadolibre"; // 🆕 Importar funciones de ML
 import Variante from "../models/Variante"; // 🆕 Importar el modelo de Variante
 
 const router = Router();
@@ -624,12 +624,22 @@ router.post("/process_payment", async (req: Request, res: Response) => {
           
           // 🔧 USAR transformedItems EN LUGAR DE items
           for (const item of transformedItems) {
-            const newStock = Math.max(0, 10 - item.quantity); // Stock fijo para prueba
-            console.log(colors.blue(`   📦 Producto: ${item.product_name}`));
-            console.log(colors.blue(`   📊 Stock fijo: 10 → Nuevo stock: ${newStock}`));
-            
-            await updateStockInMercadoLibre(item.product_id, newStock, token.access_token);
-            console.log(colors.green(`   ✅ Stock actualizado para ${item.product_name}`));
+            try {
+              // 🔧 OBTENER STOCK ACTUAL DESDE MERCADOLIBRE
+              const currentStock = await getCurrentStockFromMercadoLibre(item.product_id, token.access_token);
+              
+              // 🔧 CALCULAR NUEVO STOCK RESTANDO LA CANTIDAD COMPRADA
+              const newStock = Math.max(0, currentStock - item.quantity);
+              
+              console.log(colors.blue(`   📦 Producto: ${item.product_name}`));
+              console.log(colors.blue(`   📊 Stock actual: ${currentStock} → Nuevo stock: ${newStock} (restando ${item.quantity})`));
+              
+              await updateStockInMercadoLibre(item.product_id, newStock, token.access_token);
+              console.log(colors.green(`   ✅ Stock actualizado para ${item.product_name}`));
+            } catch (itemError) {
+              console.error(colors.red(`❌ Error procesando item ${item.product_name}:`), itemError);
+              // Continuar con el siguiente item en caso de error
+            }
           }
           
           console.log(colors.green("✅ Todos los stocks actualizados en MercadoLibre"));

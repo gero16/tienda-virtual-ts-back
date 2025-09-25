@@ -1083,6 +1083,29 @@ cron.schedule("0 */3 * * *", async () => {
 });
 
 // =====================
+// Función para obtener stock actual de MercadoLibre
+// =====================
+export async function getCurrentStockFromMercadoLibre(itemId: string, accessToken: string) {
+  try {
+    console.log(`🔍 Obteniendo stock actual para producto ${itemId} desde MercadoLibre...`);
+    
+    const response = await axios.get(
+      `https://api.mercadolibre.com/items/${itemId}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    
+    const currentStock = response.data.available_quantity || 0;
+    console.log(`📊 Stock actual de ${itemId} en ML: ${currentStock}`);
+    return currentStock;
+  } catch (error: any) {
+    console.error(`❌ Error obteniendo stock de ${itemId} desde MercadoLibre:`, error.response?.data || error.message);
+    throw error;
+  }
+}
+
+// =====================
 // Función para actualizar stock en MercadoLibre
 // =====================
 export async function updateStockInMercadoLibre(itemId: string, newStock: number, accessToken: string) {
