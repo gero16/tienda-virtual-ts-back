@@ -563,6 +563,9 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       return transformedItems;
     };
 
+    // 🔧 TRANSFORMAR ITEMS ANTES DE USAR - MOVER FUERA DEL TRY
+    const transformedItems = await transformItemsData(items);
+
     // 🆕 GUARDAR LA ORDEN EN LA BASE DE DATOS
     try {
       const ordenData = {
@@ -581,8 +584,8 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         // Información del cliente
         customer: transformCustomerData(customer),
         
-        // Productos comprados
-        items: await transformItemsData(items),
+        // Productos comprados - USAR LOS ITEMS TRANSFORMADOS
+        items: transformedItems,
         
         // Totales
         subtotal: transaction_amount,
@@ -609,9 +612,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       // No fallar el pago por error de DB, solo loggear
     }
 
-    // ✅ ACTUALIZAR STOCK EN MERCADOLIBRE (cualquier status para pruebas)
-    console.log("✅" + response.body.status);
-
+    // ✅ ACTUALIZAR STOCK EN MERCADOLIBRE - USAR ITEMS TRANSFORMADOS
     if (response.body.status === 'approved' || response.body.status === 'rejected' || response.body.status === 'pending') {
       console.log(colors.green("✅ Procesando actualización de stock en MercadoLibre..."));
       console.log(colors.blue(`   Status del pago: ${response.body.status}`));
@@ -621,7 +622,8 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         if (token) {
           console.log(colors.blue("   🔑 Token de ML obtenido, actualizando stock..."));
           
-          for (const item of items) {
+          // 🔧 USAR transformedItems EN LUGAR DE items
+          for (const item of transformedItems) {
             const newStock = Math.max(0, 10 - item.quantity); // Stock fijo para prueba
             console.log(colors.blue(`   📦 Producto: ${item.product_name}`));
             console.log(colors.blue(`   📊 Stock fijo: 10 → Nuevo stock: ${newStock}`));
