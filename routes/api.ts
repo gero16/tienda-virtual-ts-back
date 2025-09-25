@@ -1,9 +1,10 @@
 import mercadopago from "mercadopago";
 import express, { Router, Request, Response } from "express";
 import colors from "colors";
-import ProductoModel from "../models/products-model";
+import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 import { getCurrentToken, updateStockInMercadoLibre } from "./mercadolibre"; // 🆕 Importar funciones de ML
+import Variante from "../models/Variante"; // �� Importar el modelo de Variante
 
 const router = Router();
 
@@ -506,21 +507,48 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       };
     };
 
-    const transformItemsData = (items: any) => {
+    const transformItemsData = async (items: any) => {
       if (!items || !Array.isArray(items)) {
         return [];
       }
 
-      return items.map((item, index) => ({
-        product_id: item.id?.toString() || index.toString(),
-        product_name: item.title || item.name || `Producto ${index + 1}`,
-        variant_id: item.variant_id || undefined,
-        color: item.color || undefined,
-        size: item.size || undefined,
-        quantity: item.quantity || item.cantidad || 1,
-        unit_price: item.unit_price || item.price || 0,
-        total_price: (item.quantity || item.cantidad || 1) * (item.unit_price || item.price || 0)
-      }));
+      const transformedItems = [];
+      
+      for (const item of items) {
+        let mlId = item.id?.toString();
+        
+        // Si el item.id no es un ml_id, buscar en la base de datos
+        if (item.id && !item.id.toString().startsWith('MLA')) {
+          try {
+            // Buscar como producto principal
+            const producto = await ProductoModel.findOne({ _id: item.id });
+            if (producto && producto.ml_id) {
+              mlId = producto.ml_id;
+            } else {
+              // Buscar como variante
+              const variante = await Variante.findOne({ _id: item.id });
+              if (variante && variante.id) {
+                mlId = variante.id;
+              }
+            }
+          } catch (dbError) {
+            console.log(`⚠️ No se pudo encontrar ml_id para item ${item.id}`);
+          }
+        }
+
+        transformedItems.push({
+          product_id: mlId || item.id?.toString() || `item-${Date.now()}-${Math.random()}`,
+          product_name: item.title || item.name || `Producto ${transformedItems.length + 1}`,
+          variant_id: item.variant_id || undefined,
+          color: item.color || undefined,
+          size: item.size || undefined,
+          quantity: item.quantity || item.cantidad || 1,
+          unit_price: item.unit_price || item.price || 0,
+          total_price: (item.quantity || item.cantidad || 1) * (item.unit_price || item.price || 0)
+        });
+      }
+      
+      return transformedItems;
     };
 
     // 🆕 GUARDAR LA ORDEN EN LA BASE DE DATOS
@@ -542,7 +570,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         customer: transformCustomerData(customer),
         
         // Productos comprados
-        items: transformItemsData(items),
+        items: await transformItemsData(items),
         
         // Totales
         subtotal: transaction_amount,
@@ -570,6 +598,8 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     }
 
     // ✅ ACTUALIZAR STOCK EN MERCADOLIBRE (cualquier status para pruebas)
+    console.log("✅" + response.body.status);
+
     if (response.body.status === 'approved' || response.body.status === 'rejected' || response.body.status === 'pending') {
       console.log(colors.green("✅ Procesando actualización de stock en MercadoLibre..."));
       console.log(colors.blue(`   Status del pago: ${response.body.status}`));
