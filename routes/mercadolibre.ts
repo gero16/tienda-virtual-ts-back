@@ -1205,3 +1205,20 @@ router.post("/ml/productos/:ml_id/actualizar", async (req: Request, res: Respons
   }
 });
 
+// -------------------- RESET AUTH --------------------
+router.post("/reset-auth", async (req: Request, res: Response) => {
+  try {
+    // Eliminar todos los tokens existentes
+    await Token.deleteMany({});
+    console.log("🗑️ Tokens eliminados, listo para nueva autenticación");
+    
+    res.json({ 
+      message: "Tokens eliminados exitosamente. Visita /ml/auth para reautenticar.",
+      auth_url: `${req.protocol}://${req.get('host')}/ml/auth`
+    });
+  } catch (error: any) {
+    console.error("❌ Error eliminando tokens:", error.message);
+    res.status(500).json({ error: "Error eliminando tokens" });
+  }
+});
+

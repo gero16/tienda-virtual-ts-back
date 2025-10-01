@@ -631,11 +631,11 @@ router.post("/process_payment", async (req: Request, res: Response) => {
               // 🔧 CALCULAR NUEVO STOCK RESTANDO LA CANTIDAD COMPRADA
               const newStock = Math.max(0, currentStock - item.quantity);
               
-              console.log(colors.blue(`   📦 Producto: ${item.product_name}`));
+            console.log(colors.blue(`   📦 Producto: ${item.product_name}`));
               console.log(colors.blue(`   📊 Stock actual: ${currentStock} → Nuevo stock: ${newStock} (restando ${item.quantity})`));
-              
-              await updateStockInMercadoLibre(item.product_id, newStock, token.access_token);
-              console.log(colors.green(`   ✅ Stock actualizado para ${item.product_name}`));
+            
+            await updateStockInMercadoLibre(item.product_id, newStock, token.access_token);
+            console.log(colors.green(`   ✅ Stock actualizado para ${item.product_name}`));
             } catch (itemError) {
               console.error(colors.red(`❌ Error procesando item ${item.product_name}:`), itemError);
               // Continuar con el siguiente item en caso de error

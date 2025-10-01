@@ -1,0 +1,148 @@
+[
+  {
+    "titulo": "Torneo de Dodgeball Invierno 2024",
+    "descripcion": "Torneo oficial de dodgeball con premios para los primeros 3 lugares. Incluye almuerzo y medallas.",
+    "fecha": "2024-07-15",
+    "fechaFin": "2024-07-15",
+    "horaInicio": "09:00",
+    "horaFin": "18:00",
+    "ubicacion": {
+      "nombre": "Gimnasio Municipal",
+      "direccion": "Av. Principal 123, Santiago",
+      "coordenadas": {
+        "lat": -33.4489,
+        "lng": -70.6693
+      }
+    },
+    "tipo": "torneo",
+    "categoria": "mixto",
+    "precio": 5000,
+    "cupoMaximo": 32,
+    "cupoDisponible": 32,
+    "imagen": "https://ejemplo.com/torneo-invierno.jpg",
+    "organizador": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "requisitos": [
+      "Edad mínima: 16 años",
+      "Certificado médico vigente",
+      "Equipamiento deportivo básico"
+    ],
+    "activo": true,
+    "destacado": true
+  },
+  {
+    "titulo": "Entrenamiento Semanal",
+    "descripcion": "Entrenamiento regular para mejorar técnicas y condición física. Abierto para todos los niveles.",
+    "fecha": "2024-07-20",
+    "horaInicio": "19:00",
+    "horaFin": "21:00",
+    "ubicacion": {
+      "nombre": "Cancha Deportiva Centro",
+      "direccion": "Calle Deportiva 456, Santiago",
+      "coordenadas": {
+        "lat": -33.4489,
+        "lng": -70.6693
+      }
+    },
+    "tipo": "entrenamiento",
+    "categoria": "mixto",
+    "precio": 2000,
+    "cupoMaximo": 20,
+    "cupoDisponible": 20,
+    "imagen": "https://ejemplo.com/entrenamiento.jpg",
+    "organizador": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "requisitos": [
+      "Ropa deportiva cómoda",
+      "Botella de agua"
+    ],
+    "activo": true,
+    "destacado": false
+  },
+  {
+    "titulo": "Liga de Dodgeball 2024",
+    "descripcion": "Liga competitiva de dodgeball que se extiende por 3 meses. Incluye partidos semanales y ranking final.",
+    "fecha": "2024-08-01",
+    "fechaFin": "2024-10-31",
+    "horaInicio": "18:00",
+    "horaFin": "22:00",
+    "ubicacion": {
+      "nombre": "Complejo Deportivo Regional",
+      "direccion": "Av. Deportiva 789, Santiago",
+      "coordenadas": {
+        "lat": -33.4489,
+        "lng": -70.6693
+      }
+    },
+    "tipo": "liga",
+    "categoria": "avanzado",
+    "precio": 15000,
+    "cupoMaximo": 64,
+    "cupoDisponible": 64,
+    "imagen": "https://ejemplo.com/liga-2024.jpg",
+    "organizador": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "requisitos": [
+      "Experiencia previa en dodgeball",
+      "Compromiso de asistencia semanal",
+      "Pago mensual"
+    ],
+    "activo": true,
+    "destacado": true
+  },
+  {
+    "titulo": "Evento Social de Dodgeball",
+    "descripcion": "Evento recreativo para conocer gente y pasar un buen rato. Incluye comida y bebidas.",
+    "fecha": "2024-07-25",
+    "horaInicio": "16:00",
+    "horaFin": "20:00",
+    "ubicacion": {
+      "nombre": "Parque Deportivo",
+      "direccion": "Parque Central, Santiago",
+      "coordenadas": {
+        "lat": -33.4489,
+        "lng": -70.6693
+      }
+    },
+    "tipo": "social",
+    "categoria": "principiante",
+    "precio": 3000,
+    "cupoMaximo": 40,
+    "cupoDisponible": 40,
+    "imagen": "https://ejemplo.com/evento-social.jpg",
+    "organizador": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "requisitos": [
+      "Ganas de divertirse",
+      "Ropa cómoda"
+    ],
+    "activo": true,
+    "destacado": false
+  },
+  {
+    "titulo": "Torneo Benéfico",
+    "descripcion": "Torneo solidario para recaudar fondos para la fundación local. Todos los ingresos van a la causa.",
+    "fecha": "2024-08-10",
+    "fechaFin": "2024-08-11",
+    "horaInicio": "10:00",
+    "horaFin": "18:00",
+    "ubicacion": {
+      "nombre": "Estadio Municipal",
+      "direccion": "Av. Deportiva 1000, Santiago",
+      "coordenadas": {
+        "lat": -33.4489,
+        "lng": -70.6693
+      }
+    },
+    "tipo": "benefico",
+    "categoria": "mixto",
+    "precio": 8000,
+    "cupoMaximo": 48,
+    "cupoDisponible": 48,
+    "imagen": "https://ejemplo.com/torneo-benefico.jpg",
+    "organizador": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "requisitos": [
+      "Donación mínima de $5.000",
+      "Certificado médico",
+      "Espíritu solidario"
+    ],
+    "activo": true,
+    "destacado": true
+  }
+]
