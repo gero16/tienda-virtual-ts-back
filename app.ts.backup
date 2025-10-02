@@ -7,8 +7,7 @@ import bodyParser from "body-parser"
 import colors from "colors"
 
 import routes from './routes/api'; 
-import mercadolibre from './routes/mercadolibre';
-import clientes from './routes/clientes'; // 🆕 Importar rutas de clientes
+import mercadolibre from './routes/mercadolibre'; 
 
 const app : Express = express();
 const port = 3000;
@@ -27,7 +26,6 @@ mercadopago.configure({
 
 app.use('/api', routes);
 app.use('/ml', mercadolibre);
-app.use('/api/clientes', clientes); // 🆕 Agregar rutas de clientes
 app.get('/', (req: Request, res: Response) => {
   res.send('Ruta funcionando!');
 });
