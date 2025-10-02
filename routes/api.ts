@@ -4,6 +4,7 @@ import colors from "colors";
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre } from "./mercadolibre"; // 🆕 Importar funciones de ML
+import { ClienteService } from "../services/clienteService"; // 🆕 Importar servicio de clientes
 import Variante from "../models/Variante"; // 🆕 Importar el modelo de Variante
 
 const router = Router();
@@ -604,6 +605,25 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       await nuevaOrden.save();
       
       console.log(colors.green("💾 Orden guardada en la base de datos:"));
+      
+      // 🆕 CREAR O ACTUALIZAR CLIENTE
+      try {
+        const customerData = transformCustomerData(customer);
+        const cliente = await ClienteService.crearOActualizarDesdeOrden(customerData);
+        
+        // Actualizar estadísticas del cliente si el pago fue aprobado
+        if (response.body.status === "approved") {
+          await ClienteService.actualizarEstadisticasCompra(cliente._id.toString(), transaction_amount);
+        }
+        
+        console.log(colors.green("👤 Cliente procesado exitosamente:"));
+        console.log(colors.green(`   Cliente ID: ${cliente._id}`));
+        console.log(colors.green(`   Email: ${cliente.email}`));
+        console.log(colors.green(`   Nombre: ${cliente.nombre} ${cliente.apellido}`));
+      } catch (clienteError) {
+        console.error(colors.red("❌ Error procesando cliente:"), clienteError);
+        // No fallar el pago por error de cliente, solo loggear
+      }
       console.log(colors.green(`   Orden ID: ${nuevaOrden.orden_id}`));
       console.log(colors.green(`   Payment ID: ${nuevaOrden.payment_id}`));
       
