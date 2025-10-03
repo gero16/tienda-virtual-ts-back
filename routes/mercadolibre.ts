@@ -588,7 +588,19 @@ async function forceUpdateProductos() {
     } catch (error: any) {
       console.error(`❌ Error obteniendo página ${totalPages}:`, error.message);
       errors.push(`Página ${totalPages}: ${error.message}`);
-      hasMore = false;
+      
+      // Si es un error 400, probablemente hemos llegado al límite de paginación
+      if (error.response?.status === 400) {
+        console.log(`⚠️ Error 400 en página ${totalPages}, probablemente límite de paginación alcanzado`);
+        hasMore = false;
+      } else {
+        // Para otros errores, continuar con la siguiente página
+        offset += limit;
+        if (totalPages > 100) { // Aumentar límite de seguridad
+          hasMore = false;
+          console.log(`⚠️ Límite de páginas alcanzado (100), deteniendo paginación`);
+        }
+      }
     }
   }
   
@@ -786,6 +798,466 @@ router.get("/productos", async (req: Request, res: Response) => {
   }
 });
 
+// Endpoint simple para obtener categorías básicas
+router.get("/categorias-simples", async (req: Request, res: Response) => {
+  try {
+    console.log("🔍 Obteniendo categorías simples...");
+    
+    // Obtener todos los productos con category_id
+    const productos = await Producto.find(
+      { category_id: { $exists: true, $ne: "" } },
+      { category_id: 1, title: 1 }
+    );
+    
+    console.log(`📊 Productos encontrados: ${productos.length}`);
+    
+    // Agrupar por category_id y contar
+    const categoriasMap = new Map<string, { count: number; sample_titles: string[] }>();
+    
+    productos.forEach(producto => {
+      if (producto.category_id) {
+        if (!categoriasMap.has(producto.category_id)) {
+          categoriasMap.set(producto.category_id, { count: 0, sample_titles: [] });
+        }
+        const categoria = categoriasMap.get(producto.category_id)!;
+        categoria.count++;
+        if (categoria.sample_titles.length < 2) {
+          categoria.sample_titles.push(producto.title);
+        }
+      }
+    });
+    
+    // Convertir a array
+    const categorias = Array.from(categoriasMap.entries()).map(([categoryId, info]) => ({
+      id: categoryId,
+      count: info.count,
+      sample_titles: info.sample_titles
+    }));
+    
+    // Ordenar por cantidad de productos
+    categorias.sort((a, b) => b.count - a.count);
+    
+    console.log(`📊 Categorías encontradas: ${categorias.length}`);
+    
+    res.json({
+      message: "Categorías obtenidas exitosamente",
+      total_categories: categorias.length,
+      total_products: productos.length,
+      categories: categorias,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (err: any) {
+    console.error("❌ Error obteniendo categorías simples:", err);
+    res.status(500).json({ error: "Error obteniendo categorías: " + err.message });
+  }
+});
+
+// Función para sincronización avanzada con múltiples estrategias
+async function advancedSyncProductos() {
+  const token = await getCurrentToken();
+  if (!token) throw new Error("No autenticado");
+
+  console.log(`🚀 Iniciando sincronización avanzada para user_id: ${token.user_id}`);
+  
+  let allItems: string[] = [];
+  let totalProcessed = 0;
+  let totalErrors = 0;
+  const strategies = [];
+
+  // Estrategia 1: Paginación estándar con límites más pequeños
+  console.log("📋 Estrategia 1: Paginación estándar con límite 25");
+  try {
+    const strategy1 = await paginateWithLimit(token, 25);
+    allItems = [...new Set([...allItems, ...strategy1.items])];
+    totalProcessed += strategy1.processed;
+    totalErrors += strategy1.errors;
+    strategies.push({ name: "Paginación 25", items: strategy1.items.length, processed: strategy1.processed, errors: strategy1.errors });
+  } catch (error) {
+    console.error("❌ Error en estrategia 1:", error);
+  }
+
+  // Estrategia 2: Paginación con límite 50 (actual)
+  console.log("📋 Estrategia 2: Paginación estándar con límite 50");
+  try {
+    const strategy2 = await paginateWithLimit(token, 50);
+    allItems = [...new Set([...allItems, ...strategy2.items])];
+    totalProcessed += strategy2.processed;
+    totalErrors += strategy2.errors;
+    strategies.push({ name: "Paginación 50", items: strategy2.items.length, processed: strategy2.processed, errors: strategy2.errors });
+  } catch (error) {
+    console.error("❌ Error en estrategia 2:", error);
+  }
+
+  // Estrategia 3: Paginación con límite 100
+  console.log("📋 Estrategia 3: Paginación con límite 100");
+  try {
+    const strategy3 = await paginateWithLimit(token, 100);
+    allItems = [...new Set([...allItems, ...strategy3.items])];
+    totalProcessed += strategy3.processed;
+    totalErrors += strategy3.errors;
+    strategies.push({ name: "Paginación 100", items: strategy3.items.length, processed: strategy3.processed, errors: strategy3.errors });
+  } catch (error) {
+    console.error("❌ Error en estrategia 3:", error);
+  }
+
+  // Estrategia 4: Sincronización por estados
+  console.log("📋 Estrategia 4: Sincronización por estados");
+  try {
+    const strategy4 = await syncByStatus(token);
+    allItems = [...new Set([...allItems, ...strategy4.items])];
+    totalProcessed += strategy4.processed;
+    totalErrors += strategy4.errors;
+    strategies.push({ name: "Por Estados", items: strategy4.items.length, processed: strategy4.processed, errors: strategy4.errors });
+  } catch (error) {
+    console.error("❌ Error en estrategia 4:", error);
+  }
+
+  // Estrategia 5: Sincronización por fechas
+  console.log("📋 Estrategia 5: Sincronización por fechas");
+  try {
+    const strategy5 = await syncByDate(token);
+    allItems = [...new Set([...allItems, ...strategy5.items])];
+    totalProcessed += strategy5.processed;
+    totalErrors += strategy5.errors;
+    strategies.push({ name: "Por Fechas", items: strategy5.items.length, processed: strategy5.processed, errors: strategy5.errors });
+  } catch (error) {
+    console.error("❌ Error en estrategia 5:", error);
+  }
+
+  console.log(`🎉 SINCRONIZACIÓN AVANZADA COMPLETADA:`);
+  console.log(`📊 Total de productos únicos encontrados: ${allItems.length}`);
+  console.log(`📊 Total procesados: ${totalProcessed}`);
+  console.log(`📊 Total errores: ${totalErrors}`);
+  console.log(`📊 Estrategias ejecutadas: ${strategies.length}`);
+
+  return {
+    totalItems: allItems.length,
+    totalProcessed,
+    totalErrors,
+    strategies,
+    items: allItems
+  };
+}
+
+// Función auxiliar para paginación con límite específico
+async function paginateWithLimit(token: any, limit: number) {
+  let allItems: string[] = [];
+  let offset = 0;
+  let hasMore = true;
+  let totalPages = 0;
+  let processed = 0;
+  let errors = 0;
+
+  while (hasMore) {
+    totalPages++;
+    console.log(`📄 Límite ${limit} - Página ${totalPages} (offset: ${offset})`);
+    
+    try {
+      const itemsResponse = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+
+      const pageResults = itemsResponse.data.results || [];
+      console.log(`📊 Límite ${limit} - Productos en página ${totalPages}: ${pageResults.length}`);
+      
+      if (pageResults.length === 0) {
+        hasMore = false;
+        console.log(`✅ Límite ${limit} - No hay más productos. Páginas procesadas: ${totalPages - 1}`);
+      } else {
+        allItems = allItems.concat(pageResults);
+        offset += limit;
+        processed += pageResults.length;
+        
+        // Pausa optimizada
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    } catch (error: any) {
+      console.error(`❌ Límite ${limit} - Error en página ${totalPages}:`, error.message);
+      errors++;
+      
+      if (error.response?.status === 400) {
+        hasMore = false;
+        console.log(`⚠️ Límite ${limit} - Error 400, deteniendo paginación`);
+      } else {
+        offset += limit;
+        if (totalPages > 30) { // Límite de seguridad
+          hasMore = false;
+        }
+      }
+    }
+  }
+
+  return { items: allItems, processed, errors };
+}
+
+// Función para sincronización por estados
+async function syncByStatus(token: any) {
+  const statuses = ['active', 'paused', 'closed', 'under_review'];
+  let allItems: string[] = [];
+  let processed = 0;
+  let errors = 0;
+
+  for (const status of statuses) {
+    console.log(`📋 Sincronizando productos con estado: ${status}`);
+    try {
+      const response = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&limit=50`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+      
+      const results = response.data.results || [];
+      allItems = allItems.concat(results);
+      processed += results.length;
+      console.log(`📊 Estado ${status}: ${results.length} productos encontrados`);
+      
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } catch (error) {
+      console.error(`❌ Error sincronizando estado ${status}:`, error);
+      errors++;
+    }
+  }
+
+  return { items: allItems, processed, errors };
+}
+
+// Función para sincronización por fechas
+async function syncByDate(token: any) {
+  let allItems: string[] = [];
+  let processed = 0;
+  let errors = 0;
+
+  // Obtener productos de los últimos 2 años por trimestres
+  const currentDate = new Date();
+  const quarters = [];
+  
+  for (let i = 0; i < 8; i++) {
+    const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - (i * 3), 1);
+    const endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - (i * 3) + 3, 0);
+    quarters.push({
+      start: startDate.toISOString().split('T')[0],
+      end: endDate.toISOString().split('T')[0]
+    });
+  }
+
+  for (const quarter of quarters) {
+    console.log(`📋 Sincronizando productos del ${quarter.start} al ${quarter.end}`);
+    try {
+      const response = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search?date_created_from=${quarter.start}&date_created_to=${quarter.end}&limit=50`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+      
+      const results = response.data.results || [];
+      allItems = allItems.concat(results);
+      processed += results.length;
+      console.log(`📊 Período ${quarter.start}: ${results.length} productos encontrados`);
+      
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } catch (error) {
+      console.error(`❌ Error sincronizando período ${quarter.start}:`, error);
+      errors++;
+    }
+  }
+
+  return { items: allItems, processed, errors };
+}
+
+// Endpoint para solo detectar productos (sin procesarlos)
+router.get("/sync/discover-only", async (req: Request, res: Response) => {
+  try {
+    console.log("🔍 Iniciando detección de productos (sin procesar)...");
+    
+    const result = await advancedSyncProductos();
+    
+    res.json({
+      message: "✅ Detección de productos completada",
+      strategies: result.strategies,
+      discovery: {
+        total_items_found: result.totalItems,
+        total_processed: result.totalProcessed,
+        total_errors: result.totalErrors
+      },
+      current_database: {
+        total_products: await Producto.countDocuments()
+      },
+      recommendation: result.totalItems > await Producto.countDocuments() ? 
+        "Se encontraron más productos. Ejecuta /ml/sync/force-advanced para sincronizarlos." :
+        "La detección está completa.",
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en detección de productos:", err);
+    res.status(500).json({ 
+      error: "Error en detección: " + err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para verificar el total real de productos en MercadoLibre
+router.get("/sync/check-total", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    console.log(`🔍 Verificando total real de productos para user_id: ${token.user_id}`);
+    
+    // Método 1: Usar el endpoint de búsqueda con diferentes límites
+    let totalFromSearch = 0;
+    try {
+      const searchResponse = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search?limit=1`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+      totalFromSearch = searchResponse.data.paging?.total || 0;
+      console.log(`📊 Total desde búsqueda: ${totalFromSearch}`);
+    } catch (error) {
+      console.log(`⚠️ Error obteniendo total desde búsqueda:`, error);
+    }
+
+    // Método 2: Contar productos en la base de datos
+    const dbCount = await Producto.countDocuments();
+    console.log(`📊 Total en base de datos: ${dbCount}`);
+
+    // Método 3: Intentar obtener más páginas con diferentes offsets
+    let maxProductsFound = 0;
+    const testOffsets = [0, 1000, 2000, 3000, 4000, 5000];
+    
+    for (const offset of testOffsets) {
+      try {
+        const testResponse = await axios.get(
+          `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=50`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        const results = testResponse.data.results || [];
+        if (results.length > 0) {
+          maxProductsFound = Math.max(maxProductsFound, offset + results.length);
+          console.log(`📊 Offset ${offset}: ${results.length} productos encontrados`);
+        } else {
+          console.log(`📊 Offset ${offset}: Sin productos`);
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (error) {
+        console.log(`⚠️ Error en offset ${offset}:`, error.message);
+        break;
+      }
+    }
+
+    res.json({
+      message: "Verificación de total completada",
+      user_id: token.user_id,
+      totals: {
+        from_search_api: totalFromSearch,
+        from_database: dbCount,
+        max_found_with_pagination: maxProductsFound
+      },
+      recommendation: totalFromSearch > dbCount ? 
+        "Hay más productos en ML que en la DB. Ejecuta /ml/sync/force para sincronizar todos." :
+        "La sincronización parece estar completa.",
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (err: any) {
+    console.error("❌ Error verificando total:", err);
+    res.status(500).json({ error: "Error verificando total: " + err.message });
+  }
+});
+
+// Endpoint para obtener categorías con nombres legibles para el frontend
+router.get("/categorias-frontend", async (req: Request, res: Response) => {
+  try {
+    console.log("🔍 Obteniendo categorías para frontend...");
+    
+    // Obtener todos los productos con category_id
+    const productos = await Producto.find(
+      { category_id: { $exists: true, $ne: "" } },
+      { category_id: 1, title: 1 }
+    );
+    
+    console.log(`📊 Productos encontrados: ${productos.length}`);
+    
+    // Agrupar por category_id y contar
+    const categoriasMap = new Map<string, { count: number; sample_titles: string[] }>();
+    
+    productos.forEach(producto => {
+      if (producto.category_id) {
+        if (!categoriasMap.has(producto.category_id)) {
+          categoriasMap.set(producto.category_id, { count: 0, sample_titles: [] });
+        }
+        const categoria = categoriasMap.get(producto.category_id)!;
+        categoria.count++;
+        if (categoria.sample_titles.length < 2) {
+          categoria.sample_titles.push(producto.title);
+        }
+      }
+    });
+    
+    // Mapeo de categorías a nombres legibles
+    const mapeoCategorias: Record<string, string> = {
+      'MLU176854': 'Figuras y Coleccionables',
+      'MLU163764': 'Fundas para Tablets',
+      'MLU442981': 'Estuches Pokémon',
+      'MLU190994': 'Mochilas',
+      'MLU178089': 'Drones',
+      'MLU455859': 'Varitas de Magia',
+      'MLU12201': 'Colchonetas',
+      'MLU163646': 'E-readers Kindle',
+      'MLU165701': 'Botellas Deportivas',
+      'MLU168248': 'Altavoces Bluetooth',
+      'MLU443628': 'Sim Racing',
+      'MLU409415': 'Asistentes Virtuales',
+      'MLU3697': 'Auriculares',
+      'MLU7969': 'Almohadas',
+      'MLU448172': 'Accesorios Sim Racing',
+      'MLU1042': 'Lentes de Cámara',
+      'MLU443005': 'Juguetes VTech',
+      'MLU6344': 'Consolas de Videojuegos',
+      'MLU117113': 'Smartwatches',
+      'MLU12201': 'Colchonetas',
+      'MLU163646': 'E-readers Kindle',
+      'MLU165701': 'Botellas Deportivas',
+      'MLU168248': 'Altavoces Bluetooth',
+      'MLU443628': 'Sim Racing',
+      'MLU409415': 'Asistentes Virtuales',
+      'MLU3697': 'Auriculares',
+      'MLU7969': 'Almohadas',
+      'MLU448172': 'Accesorios Sim Racing',
+      'MLU1042': 'Lentes de Cámara',
+      'MLU443005': 'Juguetes VTech',
+      'MLU6344': 'Consolas de Videojuegos',
+      'MLU117113': 'Smartwatches',
+    };
+    
+    // Convertir a array con nombres legibles
+    const categorias = Array.from(categoriasMap.entries()).map(([categoryId, info]) => ({
+      id: categoryId,
+      name: mapeoCategorias[categoryId] || `Categoría ${categoryId}`,
+      count: info.count,
+      sample_titles: info.sample_titles
+    }));
+    
+    // Ordenar por cantidad de productos
+    categorias.sort((a, b) => b.count - a.count);
+    
+    console.log(`📊 Categorías encontradas: ${categorias.length}`);
+    
+    res.json({
+      message: "Categorías para frontend obtenidas exitosamente",
+      total_categories: categorias.length,
+      total_products: productos.length,
+      categories: categorias,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (err: any) {
+    console.error("❌ Error obteniendo categorías para frontend:", err);
+    res.status(500).json({ error: "Error obteniendo categorías: " + err.message });
+  }
+});
+
 router.get("/sync/force", async (req: Request, res: Response) => {
   try {
     console.log("🚀 Iniciando sincronización forzada...");
@@ -820,6 +1292,187 @@ router.get("/sync/force-sync", async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error("❌ Error en sincronización síncrona:", err);
+    res.status(500).json({ 
+      error: "Error en sincronización: " + err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para sincronización avanzada
+router.get("/sync/force-advanced", async (req: Request, res: Response) => {
+  try {
+    console.log("🚀 Iniciando sincronización avanzada...");
+    
+    const result = await advancedSyncProductos();
+    
+    // Ahora procesar todos los productos únicos encontrados
+    console.log(`🔄 Procesando ${result.items.length} productos únicos...`);
+    
+    let processedCount = 0;
+    let errorCount = 0;
+    
+    for (const itemId of result.items) {
+      try {
+        console.log(`🔄 Procesando producto ${processedCount + 1}/${result.items.length}: ${itemId}`);
+        
+        const { data: itemDetail } = await axios.get(
+          `https://api.mercadolibre.com/items/${itemId}`,
+          { headers: { Authorization: `Bearer ${await getCurrentToken()?.access_token}` } }
+        );
+
+        // Obtener descripción
+        let description = "";
+        try {
+          const descResponse = await axios.get(
+            `https://api.mercadolibre.com/items/${itemId}/description`,
+            { headers: { Authorization: `Bearer ${await getCurrentToken()?.access_token}` } }
+          );
+          description = descResponse.data.plain_text || "";
+        } catch (error) {
+          console.log("⚠️ No se pudo obtener la descripción para:", itemId);
+        }
+
+        // Guardar producto
+        await Producto.findOneAndUpdate(
+          { ml_id: itemDetail.id },
+          {
+            ml_id: itemDetail.id,
+            title: itemDetail.title,
+            price: itemDetail.price,
+            available_quantity: itemDetail.available_quantity,
+            status: itemDetail.status,
+            images: itemDetail.pictures?.map((picture: any) => ({
+              id: picture.id,
+              url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
+              max_size: picture.max_size
+            })) || [],
+            description: description,
+            sold_quantity: itemDetail.sold_quantity || 0,
+            warranty: itemDetail.warranty || "",
+            attributes: itemDetail.attributes || [],
+            tags: itemDetail.tags || [],
+            category_id: itemDetail.category_id || "",
+            condition: itemDetail.condition || "",
+            listing_type_id: itemDetail.listing_type_id || "",
+            shipping: itemDetail.shipping || {},
+            health: itemDetail.health || 0,
+            metrics: {
+              visits: itemDetail.visits || 0,
+              reviews: {
+                rating_average: itemDetail.reviews?.rating_average || 0,
+                total: itemDetail.reviews?.total || 0
+              }
+            },
+            date_created: itemDetail.date_created ? new Date(itemDetail.date_created) : new Date(),
+            last_updated: itemDetail.last_updated ? new Date(itemDetail.last_updated) : new Date()
+          },
+          { upsert: true, new: true }
+        );
+
+        processedCount++;
+        console.log(`✅ Producto ${itemId} sincronizado correctamente`);
+        
+        // Pausa entre productos
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+      } catch (error: any) {
+        console.error(`❌ Error procesando producto ${itemId}:`, error.message);
+        errorCount++;
+      }
+    }
+    
+    const totalProducts = await Producto.countDocuments();
+    
+    res.json({
+      message: "✅ Sincronización avanzada completada",
+      strategies: result.strategies,
+      discovery: {
+        total_items_found: result.totalItems,
+        total_processed: processedCount,
+        total_errors: errorCount
+      },
+      final_database: {
+        total_products: totalProducts
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en sincronización avanzada:", err);
+    res.status(500).json({ 
+      error: "Error en sincronización avanzada: " + err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para sincronización con múltiples límites
+router.get("/sync/force-multi-limit", async (req: Request, res: Response) => {
+  try {
+    console.log("🚀 Iniciando sincronización con múltiples límites...");
+    
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    let allItems: string[] = [];
+    const limits = [25, 50, 100];
+    const results = [];
+
+    for (const limit of limits) {
+      console.log(`📋 Probando con límite ${limit}...`);
+      
+      let offset = 0;
+      let hasMore = true;
+      let pageCount = 0;
+      let itemsFound = 0;
+      
+      while (hasMore && pageCount < 50) { // Límite de seguridad
+        pageCount++;
+        try {
+          const itemsResponse = await axios.get(
+            `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
+            { headers: { Authorization: `Bearer ${token.access_token}` } }
+          );
+
+          const pageResults = itemsResponse.data.results || [];
+          
+          if (pageResults.length === 0) {
+            hasMore = false;
+          } else {
+            allItems = [...new Set([...allItems, ...pageResults])];
+            itemsFound += pageResults.length;
+            offset += limit;
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } catch (error: any) {
+          console.log(`⚠️ Error con límite ${limit} en página ${pageCount}:`, error.message);
+          hasMore = false;
+        }
+      }
+      
+      results.push({
+        limit: limit,
+        pages: pageCount,
+        items_found: itemsFound,
+        total_unique: allItems.length
+      });
+      
+      console.log(`✅ Límite ${limit}: ${itemsFound} productos encontrados, ${allItems.length} únicos total`);
+    }
+
+    res.json({
+      message: "✅ Sincronización con múltiples límites completada",
+      results: results,
+      total_unique_items: allItems.length,
+      current_database: await Producto.countDocuments(),
+      recommendation: allItems.length > await Producto.countDocuments() ? 
+        "Se encontraron más productos. Ejecuta /ml/sync/force para sincronizarlos." :
+        "La detección está completa.",
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en sincronización multi-límite:", err);
     res.status(500).json({ 
       error: "Error en sincronización: " + err.message,
       timestamp: new Date().toISOString()
@@ -955,6 +1608,90 @@ router.get("/sync/status", async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: "Error obteniendo estado: " + err.message });
+  }
+});
+
+// Endpoint para obtener todas las categorías únicas de los productos
+router.get("/categorias", async (req: Request, res: Response) => {
+  try {
+    console.log("🔍 Obteniendo categorías de productos...");
+    
+    // Obtener todos los productos con category_id
+    const productos = await Producto.find(
+      { category_id: { $exists: true, $ne: "" } },
+      { category_id: 1, title: 1, _id: 1 }
+    );
+    
+    console.log(`📊 Productos encontrados: ${productos.length}`);
+    
+    // Agrupar por category_id y contar
+    const categoriasMap = new Map<string, { count: number; sample_titles: string[] }>();
+    
+    productos.forEach(producto => {
+      if (producto.category_id) {
+        if (!categoriasMap.has(producto.category_id)) {
+          categoriasMap.set(producto.category_id, { count: 0, sample_titles: [] });
+        }
+        const categoria = categoriasMap.get(producto.category_id)!;
+        categoria.count++;
+        if (categoria.sample_titles.length < 3) {
+          categoria.sample_titles.push(producto.title);
+        }
+      }
+    });
+    
+    // Convertir a array y obtener información detallada de cada categoría
+    const categorias = Array.from(categoriasMap.entries()).map(([categoryId, info]) => ({
+      id: categoryId,
+      count: info.count,
+      sample_titles: info.sample_titles
+    }));
+    
+    console.log(`📊 Categorías encontradas: ${categorias.length}`);
+    
+    // Obtener información detallada de cada categoría desde la API de ML
+    const categoriasConDetalle = await Promise.all(
+      categorias.map(async (categoria) => {
+        try {
+          const response = await axios.get(`https://api.mercadolibre.com/categories/${categoria.id}`);
+          return {
+            id: categoria.id,
+            name: response.data.name,
+            count: categoria.count,
+            sample_titles: categoria.sample_titles,
+            path_from_root: response.data.path_from_root?.map((p: any) => p.name) || [],
+            picture: response.data.picture,
+            permalink: response.data.permalink
+          };
+        } catch (error) {
+          console.log(`⚠️ Error obteniendo detalles de categoría ${categoria.id}:`, error);
+          return {
+            id: categoria.id,
+            name: `Categoría ${categoria.id}`,
+            count: categoria.count,
+            sample_titles: categoria.sample_titles,
+            path_from_root: [],
+            picture: null,
+            permalink: null
+          };
+        }
+      })
+    );
+    
+    // Ordenar por cantidad de productos
+    categoriasConDetalle.sort((a, b) => b.count - a.count);
+    
+    res.json({
+      message: "Categorías obtenidas exitosamente",
+      total_categories: categoriasConDetalle.length,
+      total_products: productos.length,
+      categories: categoriasConDetalle,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (err: any) {
+    console.error("❌ Error obteniendo categorías:", err);
+    res.status(500).json({ error: "Error obteniendo categorías: " + err.message });
   }
 });
 
