@@ -560,33 +560,46 @@ async function forceUpdateProductos() {
   const limit = 50; // Máximo por página según API de ML
   let hasMore = true;
   let totalPages = 0;
+  let errors: string[] = [];
 
   while (hasMore) {
     totalPages++;
     console.log(`📄 Obteniendo página ${totalPages} (offset: ${offset}, limit: ${limit})`);
     
-    const itemsResponse = await axios.get(
-      `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
-      { headers: { Authorization: `Bearer ${token.access_token}` } }
-    );
-    
-    const pageResults = itemsResponse.data.results || [];
-    console.log(`📊 Productos en página ${totalPages}: ${pageResults.length}`);
-    
-    if (pageResults.length === 0) {
-      hasMore = false;
-      console.log(`✅ No hay más productos. Total de páginas procesadas: ${totalPages - 1}`);
-    } else {
-      allItems = allItems.concat(pageResults);
-      offset += limit;
+    try {
+      const itemsResponse = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+
+      const pageResults = itemsResponse.data.results || [];
+      console.log(`📊 Productos en página ${totalPages}: ${pageResults.length}`);
       
-      // Pausa optimizada para respetar límites de API (200ms por página)
-      await new Promise(resolve => setTimeout(resolve, 200));
+      if (pageResults.length === 0) {
+        hasMore = false;
+        console.log(`✅ No hay más productos. Total de páginas procesadas: ${totalPages - 1}`);
+      } else {
+        allItems = allItems.concat(pageResults);
+        offset += limit;
+        
+        // Pausa optimizada para respetar límites de API (200ms por página)
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    } catch (error: any) {
+      console.error(`❌ Error obteniendo página ${totalPages}:`, error.message);
+      errors.push(`Página ${totalPages}: ${error.message}`);
+      hasMore = false;
     }
   }
   
   console.log(`📊 TOTAL DE PRODUCTOS ENCONTRADOS EN ML: ${allItems.length}`);
   console.log(`📋 Primeros 5 IDs: ${allItems.slice(0, 5).join(', ') || 'Ninguno'}`);
+  if (errors.length > 0) {
+    console.log(`⚠️ Errores encontrados: ${errors.join(', ')}`);
+  }
+
+  let processedCount = 0;
+  let errorCount = 0;
 
   for (const itemId of allItems) {
     try {
@@ -697,7 +710,7 @@ async function forceUpdateProductos() {
       }
 
       console.log(`✅ Producto ${itemId} sincronizado correctamente`);
-
+      
       // --- 🚀 LÓGICA DE DROPSHIPPING ---
       const manufacturingTime = itemDetail.sale_terms?.find((term: any) => 
         term.id === "MANUFACTURING_TIME"
@@ -747,12 +760,21 @@ async function forceUpdateProductos() {
       
       console.log(`🎯 Producto ${itemId} clasificado como: ${productType} (${handlingTime} días)`);
       
+      processedCount++;
+      
       // Pausa optimizada para procesamiento individual (100ms por producto)
       await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
       console.error(`❌ Error procesando producto ${itemId}:`, error);
+      errorCount++;
     }
   }
+  
+  console.log(`🎉 SINCRONIZACIÓN COMPLETADA:`);
+  console.log(`✅ Productos procesados exitosamente: ${processedCount}`);
+  console.log(`❌ Productos con errores: ${errorCount}`);
+  console.log(`📊 Total de productos encontrados en ML: ${allItems.length}`);
+  console.log(`📊 Total de productos en base de datos: ${await Producto.countDocuments()}`);
 }
 
 router.get("/productos", async (req: Request, res: Response) => {
@@ -766,6 +788,8 @@ router.get("/productos", async (req: Request, res: Response) => {
 
 router.get("/sync/force", async (req: Request, res: Response) => {
   try {
+    console.log("🚀 Iniciando sincronización forzada...");
+    
     // Ejecutar en background para no bloquear la respuesta
     forceUpdateProductos().then(() => {
       console.log("✅ Sincronización completada exitosamente");
@@ -775,7 +799,162 @@ router.get("/sync/force", async (req: Request, res: Response) => {
     
     res.send("🔄 Sincronización iniciada en background. Revisa los logs del servidor para ver el progreso.");
   } catch (err: any) {
+    console.error("❌ Error iniciando sincronización:", err);
     res.status(500).send("❌ Error iniciando sincronización: " + err.message);
+  }
+});
+
+// Endpoint de sincronización síncrona para debugging
+router.get("/sync/force-sync", async (req: Request, res: Response) => {
+  try {
+    console.log("🚀 Iniciando sincronización síncrona...");
+    
+    await forceUpdateProductos();
+    
+    const totalProducts = await Producto.countDocuments();
+    
+    res.json({
+      message: "✅ Sincronización completada exitosamente",
+      total_products: totalProducts,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en sincronización síncrona:", err);
+    res.status(500).json({ 
+      error: "Error en sincronización: " + err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint de sincronización limitada para debugging
+router.get("/sync/force-limited", async (req: Request, res: Response) => {
+  try {
+    console.log("🚀 Iniciando sincronización limitada (primeros 10 productos)...");
+    
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    // Obtener solo los primeros 10 productos
+    const itemsResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=0&limit=10`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+
+    const items = itemsResponse.data.results || [];
+    console.log(`📊 Productos a procesar: ${items.length}`);
+
+    let processedCount = 0;
+    let errorCount = 0;
+    const errors: string[] = [];
+
+    for (const itemId of items) {
+      try {
+        console.log(`🔄 Procesando producto ${processedCount + 1}/${items.length}: ${itemId}`);
+        
+        const { data: itemDetail } = await axios.get(
+          `https://api.mercadolibre.com/items/${itemId}`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+
+        // Obtener descripción
+        let description = "";
+        try {
+          const descResponse = await axios.get(
+            `https://api.mercadolibre.com/items/${itemId}/description`,
+            { headers: { Authorization: `Bearer ${token.access_token}` } }
+          );
+          description = descResponse.data.plain_text || "";
+        } catch (error) {
+          console.log("⚠️ No se pudo obtener la descripción para:", itemId);
+        }
+
+        // Guardar producto
+        await Producto.findOneAndUpdate(
+          { ml_id: itemDetail.id },
+          {
+            ml_id: itemDetail.id,
+            title: itemDetail.title,
+            price: itemDetail.price,
+            available_quantity: itemDetail.available_quantity,
+            status: itemDetail.status,
+            images: itemDetail.pictures?.map((picture: any) => ({
+              id: picture.id,
+              url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
+              max_size: picture.max_size
+            })) || [],
+            description: description,
+            sold_quantity: itemDetail.sold_quantity || 0,
+            warranty: itemDetail.warranty || "",
+            attributes: itemDetail.attributes || [],
+            tags: itemDetail.tags || [],
+            category_id: itemDetail.category_id || "",
+            condition: itemDetail.condition || "",
+            listing_type_id: itemDetail.listing_type_id || "",
+            shipping: itemDetail.shipping || {},
+            health: itemDetail.health || 0,
+            metrics: {
+              visits: itemDetail.visits || 0,
+              reviews: {
+                rating_average: itemDetail.reviews?.rating_average || 0,
+                total: itemDetail.reviews?.total || 0
+              }
+            },
+            date_created: itemDetail.date_created ? new Date(itemDetail.date_created) : new Date(),
+            last_updated: itemDetail.last_updated ? new Date(itemDetail.last_updated) : new Date()
+          },
+          { upsert: true, new: true }
+        );
+
+        processedCount++;
+        console.log(`✅ Producto ${itemId} sincronizado correctamente`);
+        
+        // Pausa entre productos
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+      } catch (error: any) {
+        console.error(`❌ Error procesando producto ${itemId}:`, error.message);
+        errors.push(`${itemId}: ${error.message}`);
+        errorCount++;
+      }
+    }
+    
+    const totalProducts = await Producto.countDocuments();
+    
+    res.json({
+      message: "✅ Sincronización limitada completada",
+      processed_count: processedCount,
+      error_count: errorCount,
+      total_products_in_db: totalProducts,
+      errors: errors,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en sincronización limitada:", err);
+    res.status(500).json({ 
+      error: "Error en sincronización: " + err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para verificar el estado de la sincronización
+router.get("/sync/status", async (req: Request, res: Response) => {
+  try {
+    const totalProducts = await Producto.countDocuments();
+    const productsWithMLId = await Producto.countDocuments({ ml_id: { $exists: true } });
+    
+    res.json({
+      message: "Estado de la sincronización",
+      database: {
+        total_products: totalProducts,
+        products_with_ml_id: productsWithMLId,
+        products_without_ml_id: totalProducts - productsWithMLId
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Error obteniendo estado: " + err.message });
   }
 });
 
@@ -793,82 +972,53 @@ router.get("/sync/debug", async (req: Request, res: Response) => {
     const limit = 50;
     let hasMore = true;
     let totalPages = 0;
-    let paginationInfo: any[] = [];
+    let errors: string[] = [];
 
     while (hasMore) {
       totalPages++;
-      console.log(`📄 DEBUG - Página ${totalPages} (offset: ${offset}, limit: ${limit})`);
+      console.log(`📄 DEBUG: Obteniendo página ${totalPages} (offset: ${offset}, limit: ${limit})`);
       
-      const itemsResponse = await axios.get(
-        `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
-        { headers: { Authorization: `Bearer ${token.access_token}` } }
-      );
-      
-      const pageResults = itemsResponse.data.results || [];
-      paginationInfo.push({
-        page: totalPages,
-        offset: offset,
-        limit: limit,
-        results_count: pageResults.length
-      });
-      
-      if (pageResults.length === 0) {
-        hasMore = false;
-        console.log(`✅ DEBUG - No hay más productos. Total de páginas: ${totalPages - 1}`);
-      } else {
-        allItems = allItems.concat(pageResults);
-        offset += limit;
-        
-        // Solo hacer 3 páginas para el debug para no saturar
-        if (totalPages >= 3) {
-          hasMore = false;
-          console.log(`⚠️ DEBUG - Limitado a 3 páginas para debug (${allItems.length} productos encontrados)`);
-        }
-      }
-    }
-    
-    console.log(`📊 DEBUG - Total de productos encontrados: ${allItems.length}`);
-    
-    // Obtener productos de la base de datos
-    const dbProducts = await Producto.find({});
-    console.log(`📊 DEBUG - Total de productos en DB: ${dbProducts.length}`);
-    
-    // Contar por status (solo primeros 10 para no saturar)
-    const statusCounts: { [key: string]: number } = {};
-    for (const itemId of allItems.slice(0, 10)) {
       try {
-        const { data: itemDetail } = await axios.get(
-          `https://api.mercadolibre.com/items/${itemId}`,
+        const itemsResponse = await axios.get(
+          `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
           { headers: { Authorization: `Bearer ${token.access_token}` } }
         );
-        statusCounts[itemDetail.status] = (statusCounts[itemDetail.status] || 0) + 1;
+
+        const pageResults = itemsResponse.data.results || [];
+        console.log(`📊 DEBUG: Productos en página ${totalPages}: ${pageResults.length}`);
+        
+        if (pageResults.length === 0) {
+          hasMore = false;
+          console.log(`✅ DEBUG: No hay más productos. Total de páginas procesadas: ${totalPages - 1}`);
+        } else {
+          allItems = allItems.concat(pageResults);
+          offset += limit;
+          
+          // Pausa optimizada para respetar límites de API (200ms por página)
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
       } catch (error: any) {
-        console.log(`⚠️ Error obteniendo detalle de ${itemId}:`, error.message);
+        console.error(`❌ DEBUG: Error en página ${totalPages}:`, error.message);
+        errors.push(`Página ${totalPages}: ${error.message}`);
+        hasMore = false;
       }
     }
     
+    console.log(`📊 DEBUG: TOTAL DE PRODUCTOS ENCONTRADOS EN ML: ${allItems.length}`);
+    console.log(`📋 DEBUG: Primeros 5 IDs: ${allItems.slice(0, 5).join(', ') || 'Ninguno'}`);
+
     res.json({
       message: "Debug de sincronización completado",
-      mercadolibre: {
-        user_id: token.user_id,
-        total_products_found: allItems.length,
-        pagination_info: paginationInfo,
-        first_10_ids: allItems.slice(0, 10),
-        status_counts: statusCounts,
-        note: allItems.length >= 150 ? "Se encontraron más de 150 productos. La API tiene límite de 50 por página." : "Cantidad normal de productos"
-      },
-      database: {
-        total_products: dbProducts.length,
-        products_with_ml_id: dbProducts.filter(p => p.ml_id).length
-      },
-      recommendation: allItems.length > 50 ? 
-        "Se encontraron más productos de los esperados. Ejecuta /ml/sync/force para sincronizar TODOS con paginación." : 
-        allItems.length > 0 ? 
-        "Ejecuta /ml/sync/force para sincronizar todos los productos" : 
-        "No se encontraron productos en MercadoLibre para esta cuenta"
+      user_id: token.user_id,
+      total_pages: totalPages,
+      total_items_found: allItems.length,
+      first_5_items: allItems.slice(0, 5),
+      errors: errors,
+      timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    res.status(500).json({ error: "Error en debug de sincronización: " + err.message });
+    console.error("❌ DEBUG: Error en debug:", err);
+    res.status(500).json({ error: "Error en debug: " + err.message });
   }
 });
 
