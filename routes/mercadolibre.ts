@@ -853,22 +853,22 @@ router.get("/categorias-simples", async (req: Request, res: Response) => {
   }
 });
 
-// Función para sincronización avanzada con múltiples estrategias
+// Función para sincronización avanzada optimizada (más rápida)
 async function advancedSyncProductos() {
   const token = await getCurrentToken();
   if (!token) throw new Error("No autenticado");
 
-  console.log(`🚀 Iniciando sincronización avanzada para user_id: ${token.user_id}`);
+  console.log(`🚀 Iniciando sincronización avanzada optimizada para user_id: ${token.user_id}`);
   
   let allItems: string[] = [];
   let totalProcessed = 0;
   let totalErrors = 0;
   const strategies = [];
 
-  // Estrategia 1: Paginación estándar con límites más pequeños
-  console.log("📋 Estrategia 1: Paginación estándar con límite 25");
+  // Solo usar las estrategias más efectivas y rápidas
+  console.log("📋 Estrategia 1: Paginación con límite 25 (más páginas)");
   try {
-    const strategy1 = await paginateWithLimit(token, 25);
+    const strategy1 = await paginateWithLimitOptimized(token, 25, 40); // Máximo 40 páginas
     allItems = [...new Set([...allItems, ...strategy1.items])];
     totalProcessed += strategy1.processed;
     totalErrors += strategy1.errors;
@@ -877,10 +877,9 @@ async function advancedSyncProductos() {
     console.error("❌ Error en estrategia 1:", error);
   }
 
-  // Estrategia 2: Paginación con límite 50 (actual)
-  console.log("📋 Estrategia 2: Paginación estándar con límite 50");
+  console.log("📋 Estrategia 2: Paginación con límite 50 (actual)");
   try {
-    const strategy2 = await paginateWithLimit(token, 50);
+    const strategy2 = await paginateWithLimitOptimized(token, 50, 30); // Máximo 30 páginas
     allItems = [...new Set([...allItems, ...strategy2.items])];
     totalProcessed += strategy2.processed;
     totalErrors += strategy2.errors;
@@ -889,40 +888,15 @@ async function advancedSyncProductos() {
     console.error("❌ Error en estrategia 2:", error);
   }
 
-  // Estrategia 3: Paginación con límite 100
-  console.log("📋 Estrategia 3: Paginación con límite 100");
+  console.log("📋 Estrategia 3: Sincronización por estados principales");
   try {
-    const strategy3 = await paginateWithLimit(token, 100);
+    const strategy3 = await syncByStatusOptimized(token);
     allItems = [...new Set([...allItems, ...strategy3.items])];
     totalProcessed += strategy3.processed;
     totalErrors += strategy3.errors;
-    strategies.push({ name: "Paginación 100", items: strategy3.items.length, processed: strategy3.processed, errors: strategy3.errors });
+    strategies.push({ name: "Por Estados", items: strategy3.items.length, processed: strategy3.processed, errors: strategy3.errors });
   } catch (error) {
     console.error("❌ Error en estrategia 3:", error);
-  }
-
-  // Estrategia 4: Sincronización por estados
-  console.log("📋 Estrategia 4: Sincronización por estados");
-  try {
-    const strategy4 = await syncByStatus(token);
-    allItems = [...new Set([...allItems, ...strategy4.items])];
-    totalProcessed += strategy4.processed;
-    totalErrors += strategy4.errors;
-    strategies.push({ name: "Por Estados", items: strategy4.items.length, processed: strategy4.processed, errors: strategy4.errors });
-  } catch (error) {
-    console.error("❌ Error en estrategia 4:", error);
-  }
-
-  // Estrategia 5: Sincronización por fechas
-  console.log("📋 Estrategia 5: Sincronización por fechas");
-  try {
-    const strategy5 = await syncByDate(token);
-    allItems = [...new Set([...allItems, ...strategy5.items])];
-    totalProcessed += strategy5.processed;
-    totalErrors += strategy5.errors;
-    strategies.push({ name: "Por Fechas", items: strategy5.items.length, processed: strategy5.processed, errors: strategy5.errors });
-  } catch (error) {
-    console.error("❌ Error en estrategia 5:", error);
   }
 
   console.log(`🎉 SINCRONIZACIÓN AVANZADA COMPLETADA:`);
@@ -938,6 +912,85 @@ async function advancedSyncProductos() {
     strategies,
     items: allItems
   };
+}
+
+// Función auxiliar optimizada para paginación con límite específico
+async function paginateWithLimitOptimized(token: any, limit: number, maxPages: number) {
+  let allItems: string[] = [];
+  let offset = 0;
+  let hasMore = true;
+  let totalPages = 0;
+  let processed = 0;
+  let errors = 0;
+
+  while (hasMore && totalPages < maxPages) {
+    totalPages++;
+    console.log(`📄 Límite ${limit} - Página ${totalPages}/${maxPages} (offset: ${offset})`);
+    
+    try {
+      const itemsResponse = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+
+      const pageResults = itemsResponse.data.results || [];
+      console.log(`📊 Límite ${limit} - Productos en página ${totalPages}: ${pageResults.length}`);
+      
+      if (pageResults.length === 0) {
+        hasMore = false;
+        console.log(`✅ Límite ${limit} - No hay más productos. Páginas procesadas: ${totalPages - 1}`);
+      } else {
+        allItems = allItems.concat(pageResults);
+        offset += limit;
+        processed += pageResults.length;
+        
+        // Pausa más corta para ser más rápido
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    } catch (error: any) {
+      console.error(`❌ Límite ${limit} - Error en página ${totalPages}:`, error.message);
+      errors++;
+      
+      if (error.response?.status === 400) {
+        hasMore = false;
+        console.log(`⚠️ Límite ${limit} - Error 400, deteniendo paginación`);
+      } else {
+        offset += limit;
+      }
+    }
+  }
+
+  return { items: allItems, processed, errors };
+}
+
+// Función optimizada para sincronización por estados
+async function syncByStatusOptimized(token: any) {
+  const statuses = ['active', 'paused']; // Solo los estados más importantes
+  let allItems: string[] = [];
+  let processed = 0;
+  let errors = 0;
+
+  for (const status of statuses) {
+    console.log(`📋 Sincronizando productos con estado: ${status}`);
+    try {
+      const response = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&limit=50`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+      
+      const results = response.data.results || [];
+      allItems = allItems.concat(results);
+      processed += results.length;
+      console.log(`📊 Estado ${status}: ${results.length} productos encontrados`);
+      
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (error) {
+      console.error(`❌ Error sincronizando estado ${status}:`, error);
+      errors++;
+    }
+  }
+
+  return { items: allItems, processed, errors };
 }
 
 // Función auxiliar para paginación con límite específico
@@ -1063,6 +1116,79 @@ async function syncByDate(token: any) {
 
   return { items: allItems, processed, errors };
 }
+
+// Endpoint simple y rápido para detectar productos
+router.get("/sync/discover-simple", async (req: Request, res: Response) => {
+  try {
+    console.log("🔍 Iniciando detección simple de productos...");
+    
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    let allItems: string[] = [];
+    const results = [];
+
+    // Solo probar con límite 25 y máximo 20 páginas
+    console.log("📋 Probando con límite 25 (máximo 20 páginas)...");
+    let offset = 0;
+    let pageCount = 0;
+    let itemsFound = 0;
+    
+    while (pageCount < 20) {
+      pageCount++;
+      try {
+        const itemsResponse = await axios.get(
+          `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=25`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+
+        const pageResults = itemsResponse.data.results || [];
+        
+        if (pageResults.length === 0) {
+          break;
+        } else {
+          allItems = [...new Set([...allItems, ...pageResults])];
+          itemsFound += pageResults.length;
+          offset += 25;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error: any) {
+        console.log(`⚠️ Error en página ${pageCount}:`, error.message);
+        break;
+      }
+    }
+    
+    results.push({
+      limit: 25,
+      pages: pageCount,
+      items_found: itemsFound,
+      total_unique: allItems.length
+    });
+
+    const currentDbCount = await Producto.countDocuments();
+    
+    res.json({
+      message: "✅ Detección simple completada",
+      results: results,
+      discovery: {
+        total_items_found: allItems.length,
+        current_database: currentDbCount,
+        difference: allItems.length - currentDbCount
+      },
+      recommendation: allItems.length > currentDbCount ? 
+        `Se encontraron ${allItems.length - currentDbCount} productos adicionales. Ejecuta /ml/sync/force para sincronizarlos.` :
+        "La detección está completa.",
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error en detección simple:", err);
+    res.status(500).json({ 
+      error: "Error en detección: " + err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 
 // Endpoint para solo detectar productos (sin procesarlos)
 router.get("/sync/discover-only", async (req: Request, res: Response) => {
@@ -1299,108 +1425,28 @@ router.get("/sync/force-sync", async (req: Request, res: Response) => {
   }
 });
 
-// Endpoint para sincronización avanzada
+// Endpoint para sincronización avanzada (ejecuta en background)
 router.get("/sync/force-advanced", async (req: Request, res: Response) => {
   try {
-    console.log("🚀 Iniciando sincronización avanzada...");
+    console.log("🚀 Iniciando sincronización avanzada en background...");
     
-    const result = await advancedSyncProductos();
-    
-    // Ahora procesar todos los productos únicos encontrados
-    console.log(`🔄 Procesando ${result.items.length} productos únicos...`);
-    
-    let processedCount = 0;
-    let errorCount = 0;
-    
-    for (const itemId of result.items) {
-      try {
-        console.log(`🔄 Procesando producto ${processedCount + 1}/${result.items.length}: ${itemId}`);
-        
-        const { data: itemDetail } = await axios.get(
-          `https://api.mercadolibre.com/items/${itemId}`,
-          { headers: { Authorization: `Bearer ${await getCurrentToken()?.access_token}` } }
-        );
-
-        // Obtener descripción
-        let description = "";
-        try {
-          const descResponse = await axios.get(
-            `https://api.mercadolibre.com/items/${itemId}/description`,
-            { headers: { Authorization: `Bearer ${await getCurrentToken()?.access_token}` } }
-          );
-          description = descResponse.data.plain_text || "";
-        } catch (error) {
-          console.log("⚠️ No se pudo obtener la descripción para:", itemId);
-        }
-
-        // Guardar producto
-        await Producto.findOneAndUpdate(
-          { ml_id: itemDetail.id },
-          {
-            ml_id: itemDetail.id,
-            title: itemDetail.title,
-            price: itemDetail.price,
-            available_quantity: itemDetail.available_quantity,
-            status: itemDetail.status,
-            images: itemDetail.pictures?.map((picture: any) => ({
-              id: picture.id,
-              url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
-              max_size: picture.max_size
-            })) || [],
-            description: description,
-            sold_quantity: itemDetail.sold_quantity || 0,
-            warranty: itemDetail.warranty || "",
-            attributes: itemDetail.attributes || [],
-            tags: itemDetail.tags || [],
-            category_id: itemDetail.category_id || "",
-            condition: itemDetail.condition || "",
-            listing_type_id: itemDetail.listing_type_id || "",
-            shipping: itemDetail.shipping || {},
-            health: itemDetail.health || 0,
-            metrics: {
-              visits: itemDetail.visits || 0,
-              reviews: {
-                rating_average: itemDetail.reviews?.rating_average || 0,
-                total: itemDetail.reviews?.total || 0
-              }
-            },
-            date_created: itemDetail.date_created ? new Date(itemDetail.date_created) : new Date(),
-            last_updated: itemDetail.last_updated ? new Date(itemDetail.last_updated) : new Date()
-          },
-          { upsert: true, new: true }
-        );
-
-        processedCount++;
-        console.log(`✅ Producto ${itemId} sincronizado correctamente`);
-        
-        // Pausa entre productos
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error: any) {
-        console.error(`❌ Error procesando producto ${itemId}:`, error.message);
-        errorCount++;
-      }
-    }
-    
-    const totalProducts = await Producto.countDocuments();
+    // Ejecutar en background para evitar timeout
+    advancedSyncProductos().then(async (result) => {
+      console.log("✅ Sincronización avanzada completada en background");
+      console.log(`📊 Productos encontrados: ${result.totalItems}`);
+    }).catch((error) => {
+      console.error("❌ Error en sincronización avanzada:", error);
+    });
     
     res.json({
-      message: "✅ Sincronización avanzada completada",
-      strategies: result.strategies,
-      discovery: {
-        total_items_found: result.totalItems,
-        total_processed: processedCount,
-        total_errors: errorCount
-      },
-      final_database: {
-        total_products: totalProducts
-      },
+      message: "🔄 Sincronización avanzada iniciada en background. Revisa los logs del servidor para ver el progreso.",
+      status: "running",
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    console.error("❌ Error en sincronización avanzada:", err);
+    console.error("❌ Error iniciando sincronización avanzada:", err);
     res.status(500).json({ 
-      error: "Error en sincronización avanzada: " + err.message,
+      error: "Error iniciando sincronización avanzada: " + err.message,
       timestamp: new Date().toISOString()
     });
   }
