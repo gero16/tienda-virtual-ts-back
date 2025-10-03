@@ -552,17 +552,43 @@ async function forceUpdateProductos() {
   const token = await getCurrentToken();
   if (!token) throw new Error("No autenticado");
 
-  console.log(`🔍 Obteniendo productos para user_id: ${token.user_id}`);
+  console.log(`🔍 Obteniendo TODOS los productos para user_id: ${token.user_id}`);
   
-  const itemsResponse = await axios.get(
-    `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
-    { headers: { Authorization: `Bearer ${token.access_token}` } }
-  );
-  
-  console.log(`📊 Total de productos encontrados en ML: ${itemsResponse.data.results?.length || 0}`);
-  console.log(`📋 Primeros 5 IDs: ${itemsResponse.data.results?.slice(0, 5).join(', ') || 'Ninguno'}`);
+  // Implementar paginación para obtener todos los productos
+  let allItems: string[] = [];
+  let offset = 0;
+  const limit = 50; // Máximo por página según API de ML
+  let hasMore = true;
+  let totalPages = 0;
 
-  for (const itemId of itemsResponse.data.results) {
+  while (hasMore) {
+    totalPages++;
+    console.log(`📄 Obteniendo página ${totalPages} (offset: ${offset}, limit: ${limit})`);
+    
+    const itemsResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+    
+    const pageResults = itemsResponse.data.results || [];
+    console.log(`📊 Productos en página ${totalPages}: ${pageResults.length}`);
+    
+    if (pageResults.length === 0) {
+      hasMore = false;
+      console.log(`✅ No hay más productos. Total de páginas procesadas: ${totalPages - 1}`);
+    } else {
+      allItems = allItems.concat(pageResults);
+      offset += limit;
+      
+      // Pausa optimizada para respetar límites de API (200ms por página)
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+  }
+  
+  console.log(`📊 TOTAL DE PRODUCTOS ENCONTRADOS EN ML: ${allItems.length}`);
+  console.log(`📋 Primeros 5 IDs: ${allItems.slice(0, 5).join(', ') || 'Ninguno'}`);
+
+  for (const itemId of allItems) {
     try {
       const { data: itemDetail } = await axios.get(
         `https://api.mercadolibre.com/items/${itemId}`,
@@ -721,8 +747,8 @@ async function forceUpdateProductos() {
       
       console.log(`🎯 Producto ${itemId} clasificado como: ${productType} (${handlingTime} días)`);
       
-      // Pequeña pausa para no saturar la API
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Pausa optimizada para procesamiento individual (100ms por producto)
+      await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
       console.error(`❌ Error procesando producto ${itemId}:`, error);
     }
@@ -740,14 +766,20 @@ router.get("/productos", async (req: Request, res: Response) => {
 
 router.get("/sync/force", async (req: Request, res: Response) => {
   try {
-    await forceUpdateProductos();
-    res.send("✅ Sincronización forzada completada");
+    // Ejecutar en background para no bloquear la respuesta
+    forceUpdateProductos().then(() => {
+      console.log("✅ Sincronización completada exitosamente");
+    }).catch((error) => {
+      console.error("❌ Error en sincronización:", error);
+    });
+    
+    res.send("🔄 Sincronización iniciada en background. Revisa los logs del servidor para ver el progreso.");
   } catch (err: any) {
-    res.status(500).send("❌ Error en sincronización: " + err.message);
+    res.status(500).send("❌ Error iniciando sincronización: " + err.message);
   }
 });
 
-// Endpoint para debuggear la sincronización
+// Endpoint para debuggear la sincronización con paginación
 router.get("/sync/debug", async (req: Request, res: Response) => {
   try {
     const token = await getCurrentToken();
@@ -755,29 +787,62 @@ router.get("/sync/debug", async (req: Request, res: Response) => {
 
     console.log(`🔍 DEBUG: Obteniendo productos para user_id: ${token.user_id}`);
     
-    // Obtener productos de MercadoLibre
-    const itemsResponse = await axios.get(
-      `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
-      { headers: { Authorization: `Bearer ${token.access_token}` } }
-    );
+    // Implementar paginación para obtener todos los productos
+    let allItems: string[] = [];
+    let offset = 0;
+    const limit = 50;
+    let hasMore = true;
+    let totalPages = 0;
+    let paginationInfo: any[] = [];
+
+    while (hasMore) {
+      totalPages++;
+      console.log(`📄 DEBUG - Página ${totalPages} (offset: ${offset}, limit: ${limit})`);
+      
+      const itemsResponse = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+      
+      const pageResults = itemsResponse.data.results || [];
+      paginationInfo.push({
+        page: totalPages,
+        offset: offset,
+        limit: limit,
+        results_count: pageResults.length
+      });
+      
+      if (pageResults.length === 0) {
+        hasMore = false;
+        console.log(`✅ DEBUG - No hay más productos. Total de páginas: ${totalPages - 1}`);
+      } else {
+        allItems = allItems.concat(pageResults);
+        offset += limit;
+        
+        // Solo hacer 3 páginas para el debug para no saturar
+        if (totalPages >= 3) {
+          hasMore = false;
+          console.log(`⚠️ DEBUG - Limitado a 3 páginas para debug (${allItems.length} productos encontrados)`);
+        }
+      }
+    }
     
-    const mlProducts = itemsResponse.data.results || [];
-    console.log(`📊 Total de productos en ML: ${mlProducts.length}`);
+    console.log(`📊 DEBUG - Total de productos encontrados: ${allItems.length}`);
     
     // Obtener productos de la base de datos
     const dbProducts = await Producto.find({});
-    console.log(`📊 Total de productos en DB: ${dbProducts.length}`);
+    console.log(`📊 DEBUG - Total de productos en DB: ${dbProducts.length}`);
     
-    // Contar por status
-    const statusCounts = {};
-    for (const itemId of mlProducts.slice(0, 10)) { // Solo los primeros 10 para no saturar
+    // Contar por status (solo primeros 10 para no saturar)
+    const statusCounts: { [key: string]: number } = {};
+    for (const itemId of allItems.slice(0, 10)) {
       try {
         const { data: itemDetail } = await axios.get(
           `https://api.mercadolibre.com/items/${itemId}`,
           { headers: { Authorization: `Bearer ${token.access_token}` } }
         );
         statusCounts[itemDetail.status] = (statusCounts[itemDetail.status] || 0) + 1;
-      } catch (error) {
+      } catch (error: any) {
         console.log(`⚠️ Error obteniendo detalle de ${itemId}:`, error.message);
       }
     }
@@ -786,15 +851,19 @@ router.get("/sync/debug", async (req: Request, res: Response) => {
       message: "Debug de sincronización completado",
       mercadolibre: {
         user_id: token.user_id,
-        total_products: mlProducts.length,
-        first_10_ids: mlProducts.slice(0, 10),
-        status_counts: statusCounts
+        total_products_found: allItems.length,
+        pagination_info: paginationInfo,
+        first_10_ids: allItems.slice(0, 10),
+        status_counts: statusCounts,
+        note: allItems.length >= 150 ? "Se encontraron más de 150 productos. La API tiene límite de 50 por página." : "Cantidad normal de productos"
       },
       database: {
         total_products: dbProducts.length,
         products_with_ml_id: dbProducts.filter(p => p.ml_id).length
       },
-      recommendation: mlProducts.length > 0 ? 
+      recommendation: allItems.length > 50 ? 
+        "Se encontraron más productos de los esperados. Ejecuta /ml/sync/force para sincronizar TODOS con paginación." : 
+        allItems.length > 0 ? 
         "Ejecuta /ml/sync/force para sincronizar todos los productos" : 
         "No se encontraron productos en MercadoLibre para esta cuenta"
     });

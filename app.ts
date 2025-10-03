@@ -14,7 +14,20 @@ const app : Express = express();
 const port = 3000;
 
 app.use(bodyParser.json())
-app.use(cors())
+
+// Configuración CORS para permitir el frontend de Vercel
+const corsOptions = {
+  origin: [
+    'https://mercado-libre-roan.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:3001'
+  ],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions))
 
 import mercadopago from 'mercadopago';
 
