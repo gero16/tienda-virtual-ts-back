@@ -798,6 +798,22 @@ router.get("/productos", async (req: Request, res: Response) => {
   }
 });
 
+// Endpoint para obtener un producto específico por ID
+router.get("/productos/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const producto = await Producto.findOne({ ml_id: id }).populate("variantes");
+    
+    if (!producto) {
+      return res.status(404).json({ error: "Producto no encontrado" });
+    }
+    
+    res.json(producto);
+  } catch (err: any) {
+    res.status(500).json({ error: "Error al obtener producto: " + err.message });
+  }
+});
+
 // Endpoint simple para obtener categorías básicas
 router.get("/categorias-simples", async (req: Request, res: Response) => {
   try {
@@ -1266,7 +1282,7 @@ router.get("/sync/check-total", async (req: Request, res: Response) => {
           break;
         }
         await new Promise(resolve => setTimeout(resolve, 200));
-      } catch (error) {
+      } catch (error: any) {
         console.log(`⚠️ Error en offset ${offset}:`, error.message);
         break;
       }
@@ -1329,19 +1345,6 @@ router.get("/categorias-frontend", async (req: Request, res: Response) => {
       'MLU190994': 'Mochilas',
       'MLU178089': 'Drones',
       'MLU455859': 'Varitas de Magia',
-      'MLU12201': 'Colchonetas',
-      'MLU163646': 'E-readers Kindle',
-      'MLU165701': 'Botellas Deportivas',
-      'MLU168248': 'Altavoces Bluetooth',
-      'MLU443628': 'Sim Racing',
-      'MLU409415': 'Asistentes Virtuales',
-      'MLU3697': 'Auriculares',
-      'MLU7969': 'Almohadas',
-      'MLU448172': 'Accesorios Sim Racing',
-      'MLU1042': 'Lentes de Cámara',
-      'MLU443005': 'Juguetes VTech',
-      'MLU6344': 'Consolas de Videojuegos',
-      'MLU117113': 'Smartwatches',
       'MLU12201': 'Colchonetas',
       'MLU163646': 'E-readers Kindle',
       'MLU165701': 'Botellas Deportivas',
