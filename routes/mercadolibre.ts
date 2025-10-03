@@ -552,10 +552,15 @@ async function forceUpdateProductos() {
   const token = await getCurrentToken();
   if (!token) throw new Error("No autenticado");
 
+  console.log(`🔍 Obteniendo productos para user_id: ${token.user_id}`);
+  
   const itemsResponse = await axios.get(
     `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
     { headers: { Authorization: `Bearer ${token.access_token}` } }
   );
+  
+  console.log(`📊 Total de productos encontrados en ML: ${itemsResponse.data.results?.length || 0}`);
+  console.log(`📋 Primeros 5 IDs: ${itemsResponse.data.results?.slice(0, 5).join(', ') || 'Ninguno'}`);
 
   for (const itemId of itemsResponse.data.results) {
     try {
@@ -739,6 +744,62 @@ router.get("/sync/force", async (req: Request, res: Response) => {
     res.send("✅ Sincronización forzada completada");
   } catch (err: any) {
     res.status(500).send("❌ Error en sincronización: " + err.message);
+  }
+});
+
+// Endpoint para debuggear la sincronización
+router.get("/sync/debug", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    console.log(`🔍 DEBUG: Obteniendo productos para user_id: ${token.user_id}`);
+    
+    // Obtener productos de MercadoLibre
+    const itemsResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+    
+    const mlProducts = itemsResponse.data.results || [];
+    console.log(`📊 Total de productos en ML: ${mlProducts.length}`);
+    
+    // Obtener productos de la base de datos
+    const dbProducts = await Producto.find({});
+    console.log(`📊 Total de productos en DB: ${dbProducts.length}`);
+    
+    // Contar por status
+    const statusCounts = {};
+    for (const itemId of mlProducts.slice(0, 10)) { // Solo los primeros 10 para no saturar
+      try {
+        const { data: itemDetail } = await axios.get(
+          `https://api.mercadolibre.com/items/${itemId}`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        statusCounts[itemDetail.status] = (statusCounts[itemDetail.status] || 0) + 1;
+      } catch (error) {
+        console.log(`⚠️ Error obteniendo detalle de ${itemId}:`, error.message);
+      }
+    }
+    
+    res.json({
+      message: "Debug de sincronización completado",
+      mercadolibre: {
+        user_id: token.user_id,
+        total_products: mlProducts.length,
+        first_10_ids: mlProducts.slice(0, 10),
+        status_counts: statusCounts
+      },
+      database: {
+        total_products: dbProducts.length,
+        products_with_ml_id: dbProducts.filter(p => p.ml_id).length
+      },
+      recommendation: mlProducts.length > 0 ? 
+        "Ejecuta /ml/sync/force para sincronizar todos los productos" : 
+        "No se encontraron productos en MercadoLibre para esta cuenta"
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Error en debug de sincronización: " + err.message });
   }
 });
 
