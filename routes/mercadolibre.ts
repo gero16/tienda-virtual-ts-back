@@ -1575,18 +1575,203 @@ async function robustSyncProductos() {
     console.error("❌ Error en estrategia 4:", error);
   }
 
-  console.log(`🎉 SINCRONIZACIÓN ROBUSTA COMPLETADA:`);
+  console.log(`🎉 DETECCIÓN ROBUSTA COMPLETADA:`);
   console.log(`📊 Total de productos únicos encontrados: ${allItems.length}`);
   console.log(`📊 Total procesados: ${totalProcessed}`);
   console.log(`📊 Total errores: ${totalErrors}`);
   console.log(`📊 Estrategias ejecutadas: ${strategies.length}`);
 
+  // 🚀 PROCESAR TODOS LOS PRODUCTOS ENCONTRADOS
+  console.log(`🔄 Iniciando procesamiento de ${allItems.length} productos únicos...`);
+  
+  let processedCount = 0;
+  let errorCount = 0;
+  const processingErrors: string[] = [];
+
+  for (const itemId of allItems) {
+    try {
+      console.log(`🔄 Procesando producto ${processedCount + 1}/${allItems.length}: ${itemId}`);
+      
+      const { data: itemDetail } = await axios.get(
+        `https://api.mercadolibre.com/items/${itemId}`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+
+      // Obtener descripción por separado
+      let description = "";
+      try {
+        const descResponse = await axios.get(
+          `https://api.mercadolibre.com/items/${itemId}/description`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        description = descResponse.data.plain_text || "";
+      } catch (error) {
+        console.log("⚠️ No se pudo obtener la descripción para:", itemId);
+      }
+
+      // --- Producto ---
+      let producto = await Producto.findOneAndUpdate(
+        { ml_id: itemDetail.id },
+        {
+          ml_id: itemDetail.id,
+          title: itemDetail.title,
+          price: itemDetail.price,
+          available_quantity: itemDetail.available_quantity,
+          status: itemDetail.status,
+          // Imágenes en mejor calidad
+          images: itemDetail.pictures?.map((picture: any) => ({
+            id: picture.id,
+            url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
+            max_size: picture.max_size
+          })) || [],
+          // Información adicional
+          description: description,
+          sold_quantity: itemDetail.sold_quantity || 0,
+          warranty: itemDetail.warranty || "",
+          attributes: itemDetail.attributes || [],
+          tags: itemDetail.tags || [],
+          category_id: itemDetail.category_id || "",
+          condition: itemDetail.condition || "",
+          listing_type_id: itemDetail.listing_type_id || "",
+          shipping: itemDetail.shipping || {},
+          health: itemDetail.health || 0,
+          // Métricas
+          metrics: {
+            visits: itemDetail.visits || 0,
+            reviews: {
+              rating_average: itemDetail.reviews?.rating_average || 0,
+              total: itemDetail.reviews?.total || 0
+            }
+          },
+          // Fechas importantes
+          date_created: itemDetail.date_created ? new Date(itemDetail.date_created) : new Date(),
+          last_updated: itemDetail.last_updated ? new Date(itemDetail.last_updated) : new Date()
+        },
+        { upsert: true, new: true }
+      );
+
+      // --- Variantes ---
+      if (itemDetail.variations?.length > 0 && producto) {
+        const varianteIds: string[] = [];
+
+        for (const variante of itemDetail.variations) {
+          if (!variante.id) continue;
+
+          const color = variante.attribute_combinations.find(
+            (a: any) => a.id === "COLOR"
+          )?.value_name || null;
+
+          const size = variante.attribute_combinations.find(
+            (a: any) => a.id === "SIZE"
+          )?.value_name || null;
+
+          const savedVariante = await Variante.findOneAndUpdate(
+            { id: variante.id.toString() },
+            {
+              id: variante.id.toString(),
+              product_id: producto._id,
+              color,
+              size,
+              stock: variante.available_quantity,
+              price: variante.price || itemDetail.price,
+              images: variante.picture_ids?.map((id: string) => ({
+                id: id,
+                url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
+                high_quality: `https://http2.mlstatic.com/D_${id}-O.jpg`
+              })) || [],
+              attribute_combinations: variante.attribute_combinations?.map((attr: any) => ({
+                id: attr.id,
+                name: attr.name,
+                value_id: attr.value_id,
+                value_name: attr.value_name
+              })) || []
+            },
+            { upsert: true, new: true }
+          );
+
+          if (savedVariante) {
+            varianteIds.push(savedVariante._id.toString());
+          }
+        }
+
+        producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
+        await producto.save();
+      }
+
+      // --- 🚀 LÓGICA DE DROPSHIPPING ---
+      const manufacturingTime = itemDetail.sale_terms?.find((term: any) => 
+        term.id === "MANUFACTURING_TIME"
+      );
+      
+      let handlingTime = 3; // Default para stock físico
+      
+      if (manufacturingTime?.value_struct?.number) {
+        handlingTime = manufacturingTime.value_struct.number;
+      }
+      
+      const productType = handlingTime > 14 ? "dropshipping" : "stock_fisico";
+      const deliveryTimes = calculateDeliveryTimes(productType, handlingTime);
+      
+      // Actualizar producto con información de dropshipping
+      const updateData: any = {
+        tipo_venta: productType,
+        tiempo_entrega_total: deliveryTimes.total,
+        tiempo_entrega_texto: deliveryTimes.texto
+      };
+      
+      if (productType === "dropshipping") {
+        updateData.dropshipping = {
+          dias_preparacion: handlingTime,
+          dias_envio_estimado: 7,
+          proveedor: "Proveedor externo",
+          pais_origen: "Estados Unidos",
+          requiere_confirmacion: true,
+          costo_importacion: 0,
+          tiempo_configurado_en_ml: handlingTime > 3
+        };
+      } else {
+        updateData.stock_fisico = {
+          cantidad_disponible: itemDetail.available_quantity || 0,
+          ubicacion: "Almacén local",
+          reorder_point: Math.max(1, Math.floor((itemDetail.available_quantity || 0) * 0.2)),
+          ultima_actualizacion_stock: new Date(),
+          tiempo_configurado_en_ml: handlingTime > 3
+        };
+      }
+      
+      await Producto.findOneAndUpdate(
+        { ml_id: itemDetail.id },
+        { $set: updateData },
+        { new: true }
+      );
+      
+      console.log(`✅ Producto ${itemId} sincronizado correctamente`);
+      
+      processedCount++;
+      
+      // Pausa entre productos
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+    } catch (error: any) {
+      console.error(`❌ Error procesando producto ${itemId}:`, error.message);
+      processingErrors.push(`${itemId}: ${error.message}`);
+      errorCount++;
+    }
+  }
+  
+  console.log(`🎉 PROCESAMIENTO COMPLETADO:`);
+  console.log(`✅ Productos procesados exitosamente: ${processedCount}`);
+  console.log(`❌ Productos con errores: ${errorCount}`);
+  console.log(`📊 Total de productos únicos encontrados: ${allItems.length}`);
+  console.log(`📊 Total de productos en base de datos: ${await Producto.countDocuments()}`);
+
   return {
     totalItems: allItems.length,
-    totalProcessed,
-    totalErrors,
+    totalProcessed: processedCount,
+    totalErrors: errorCount,
     strategies,
-    items: allItems
+    items: allItems,
+    processingErrors
   };
 }
 
@@ -1937,13 +2122,29 @@ router.get("/sync/status", async (req: Request, res: Response) => {
   try {
     const totalProducts = await Producto.countDocuments();
     const productsWithMLId = await Producto.countDocuments({ ml_id: { $exists: true } });
+    const productsActive = await Producto.countDocuments({ status: "active" });
+    const productsPaused = await Producto.countDocuments({ status: "paused" });
+    const productsClosed = await Producto.countDocuments({ status: "closed" });
+    
+    // Obtener estadísticas de dropshipping
+    const dropshippingProducts = await Producto.countDocuments({ tipo_venta: "dropshipping" });
+    const stockFisicoProducts = await Producto.countDocuments({ tipo_venta: "stock_fisico" });
     
     res.json({
       message: "Estado de la sincronización",
       database: {
         total_products: totalProducts,
         products_with_ml_id: productsWithMLId,
-        products_without_ml_id: totalProducts - productsWithMLId
+        products_without_ml_id: totalProducts - productsWithMLId,
+        by_status: {
+          active: productsActive,
+          paused: productsPaused,
+          closed: productsClosed
+        },
+        by_type: {
+          dropshipping: dropshippingProducts,
+          stock_fisico: stockFisicoProducts
+        }
       },
       timestamp: new Date().toISOString()
     });
