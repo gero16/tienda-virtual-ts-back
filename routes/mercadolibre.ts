@@ -554,15 +554,18 @@ async function forceUpdateProductos() {
 
   console.log(`🔍 Obteniendo TODOS los productos para user_id: ${token.user_id}`);
   
-  // Implementar paginación para obtener todos los productos
+  // Implementar paginación mejorada para obtener todos los productos
   let allItems: string[] = [];
   let offset = 0;
   const limit = 50; // Máximo por página según API de ML
   let hasMore = true;
   let totalPages = 0;
   let errors: string[] = [];
+  let consecutiveErrors = 0;
+  const maxConsecutiveErrors = 3; // Máximo de errores consecutivos antes de parar
+  const maxPages = 200; // Aumentar límite de páginas para cuentas grandes
 
-  while (hasMore) {
+  while (hasMore && totalPages < maxPages) {
     totalPages++;
     console.log(`📄 Obteniendo página ${totalPages} (offset: ${offset}, limit: ${limit})`);
     
@@ -581,25 +584,28 @@ async function forceUpdateProductos() {
       } else {
         allItems = allItems.concat(pageResults);
         offset += limit;
+        consecutiveErrors = 0; // Resetear contador de errores consecutivos
         
-        // Pausa optimizada para respetar límites de API (200ms por página)
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // Pausa optimizada para respetar límites de API (300ms por página)
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
     } catch (error: any) {
       console.error(`❌ Error obteniendo página ${totalPages}:`, error.message);
       errors.push(`Página ${totalPages}: ${error.message}`);
+      consecutiveErrors++;
       
       // Si es un error 400, probablemente hemos llegado al límite de paginación
       if (error.response?.status === 400) {
         console.log(`⚠️ Error 400 en página ${totalPages}, probablemente límite de paginación alcanzado`);
         hasMore = false;
+      } else if (consecutiveErrors >= maxConsecutiveErrors) {
+        console.log(`⚠️ Demasiados errores consecutivos (${consecutiveErrors}), deteniendo paginación`);
+        hasMore = false;
       } else {
-        // Para otros errores, continuar con la siguiente página
+        // Para otros errores, continuar con la siguiente página después de una pausa más larga
         offset += limit;
-        if (totalPages > 100) { // Aumentar límite de seguridad
-          hasMore = false;
-          console.log(`⚠️ Límite de páginas alcanzado (100), deteniendo paginación`);
-        }
+        console.log(`⏳ Pausa extendida debido a error (${consecutiveErrors}/${maxConsecutiveErrors})`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Pausa de 1 segundo en caso de error
       }
     }
   }
@@ -1454,6 +1460,292 @@ router.get("/sync/force-advanced", async (req: Request, res: Response) => {
     });
   }
 });
+
+// Endpoint para sincronización robusta (nueva función mejorada)
+router.get("/sync/force-robust", async (req: Request, res: Response) => {
+  try {
+    console.log("🚀 Iniciando sincronización robusta en background...");
+    
+    // Ejecutar en background para evitar timeout
+    robustSyncProductos().then(async (result) => {
+      console.log("✅ Sincronización robusta completada en background");
+      console.log(`📊 Productos únicos encontrados: ${result.totalItems}`);
+      console.log(`📊 Estrategias ejecutadas: ${result.strategies.length}`);
+    }).catch((error) => {
+      console.error("❌ Error en sincronización robusta:", error);
+    });
+    
+    res.json({
+      message: "🔄 Sincronización robusta iniciada en background. Esta función usa múltiples estrategias para asegurar que se obtengan todos los productos. Revisa los logs del servidor para ver el progreso.",
+      status: "running",
+      strategies: [
+        "Paginación estándar (límite 50)",
+        "Paginación con límite 25",
+        "Sincronización por estados",
+        "Sincronización por fechas (últimos 2 años)"
+      ],
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error iniciando sincronización robusta:", err);
+    res.status(500).json({ 
+      error: "Error iniciando sincronización robusta: " + err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Función mejorada para sincronización robusta con múltiples estrategias
+async function robustSyncProductos() {
+  const token = await getCurrentToken();
+  if (!token) throw new Error("No autenticado");
+
+  console.log(`🚀 Iniciando sincronización robusta para user_id: ${token.user_id}`);
+  
+  let allItems: string[] = [];
+  const strategies = [];
+  let totalProcessed = 0;
+  let totalErrors = 0;
+
+  // Estrategia 1: Paginación estándar con límite 50
+  console.log("📋 Estrategia 1: Paginación estándar (límite 50)");
+  try {
+    const strategy1 = await paginateWithLimitRobust(token, 50, 100);
+    allItems = [...new Set([...allItems, ...strategy1.items])];
+    totalProcessed += strategy1.processed;
+    totalErrors += strategy1.errors;
+    strategies.push({ 
+      name: "Paginación Estándar", 
+      items: strategy1.items.length, 
+      processed: strategy1.processed, 
+      errors: strategy1.errors 
+    });
+  } catch (error) {
+    console.error("❌ Error en estrategia 1:", error);
+  }
+
+  // Estrategia 2: Paginación con límite 25 (más páginas)
+  console.log("📋 Estrategia 2: Paginación con límite 25");
+  try {
+    const strategy2 = await paginateWithLimitRobust(token, 25, 150);
+    allItems = [...new Set([...allItems, ...strategy2.items])];
+    totalProcessed += strategy2.processed;
+    totalErrors += strategy2.errors;
+    strategies.push({ 
+      name: "Paginación 25", 
+      items: strategy2.items.length, 
+      processed: strategy2.processed, 
+      errors: strategy2.errors 
+    });
+  } catch (error) {
+    console.error("❌ Error en estrategia 2:", error);
+  }
+
+  // Estrategia 3: Sincronización por estados
+  console.log("📋 Estrategia 3: Sincronización por estados");
+  try {
+    const strategy3 = await syncByStatusRobust(token);
+    allItems = [...new Set([...allItems, ...strategy3.items])];
+    totalProcessed += strategy3.processed;
+    totalErrors += strategy3.errors;
+    strategies.push({ 
+      name: "Por Estados", 
+      items: strategy3.items.length, 
+      processed: strategy3.processed, 
+      errors: strategy3.errors 
+    });
+  } catch (error) {
+    console.error("❌ Error en estrategia 3:", error);
+  }
+
+  // Estrategia 4: Sincronización por fechas (últimos 2 años)
+  console.log("📋 Estrategia 4: Sincronización por fechas");
+  try {
+    const strategy4 = await syncByDateRobust(token);
+    allItems = [...new Set([...allItems, ...strategy4.items])];
+    totalProcessed += strategy4.processed;
+    totalErrors += strategy4.errors;
+    strategies.push({ 
+      name: "Por Fechas", 
+      items: strategy4.items.length, 
+      processed: strategy4.processed, 
+      errors: strategy4.errors 
+    });
+  } catch (error) {
+    console.error("❌ Error en estrategia 4:", error);
+  }
+
+  console.log(`🎉 SINCRONIZACIÓN ROBUSTA COMPLETADA:`);
+  console.log(`📊 Total de productos únicos encontrados: ${allItems.length}`);
+  console.log(`📊 Total procesados: ${totalProcessed}`);
+  console.log(`📊 Total errores: ${totalErrors}`);
+  console.log(`📊 Estrategias ejecutadas: ${strategies.length}`);
+
+  return {
+    totalItems: allItems.length,
+    totalProcessed,
+    totalErrors,
+    strategies,
+    items: allItems
+  };
+}
+
+// Función auxiliar robusta para paginación
+async function paginateWithLimitRobust(token: any, limit: number, maxPages: number) {
+  let allItems: string[] = [];
+  let offset = 0;
+  let hasMore = true;
+  let totalPages = 0;
+  let processed = 0;
+  let errors = 0;
+  let consecutiveErrors = 0;
+  const maxConsecutiveErrors = 5;
+
+  while (hasMore && totalPages < maxPages) {
+    totalPages++;
+    console.log(`📄 Límite ${limit} - Página ${totalPages}/${maxPages} (offset: ${offset})`);
+    
+    try {
+      const itemsResponse = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+
+      const pageResults = itemsResponse.data.results || [];
+      console.log(`📊 Límite ${limit} - Productos en página ${totalPages}: ${pageResults.length}`);
+      
+      if (pageResults.length === 0) {
+        hasMore = false;
+        console.log(`✅ Límite ${limit} - No hay más productos. Páginas procesadas: ${totalPages - 1}`);
+      } else {
+        allItems = allItems.concat(pageResults);
+        offset += limit;
+        processed += pageResults.length;
+        consecutiveErrors = 0;
+        
+        // Pausa adaptativa basada en el límite
+        const pauseTime = limit <= 25 ? 200 : 300;
+        await new Promise(resolve => setTimeout(resolve, pauseTime));
+      }
+    } catch (error: any) {
+      console.error(`❌ Límite ${limit} - Error en página ${totalPages}:`, error.message);
+      errors++;
+      consecutiveErrors++;
+      
+      if (error.response?.status === 400) {
+        hasMore = false;
+        console.log(`⚠️ Límite ${limit} - Error 400, deteniendo paginación`);
+      } else if (consecutiveErrors >= maxConsecutiveErrors) {
+        hasMore = false;
+        console.log(`⚠️ Límite ${limit} - Demasiados errores consecutivos, deteniendo`);
+      } else {
+        offset += limit;
+        console.log(`⏳ Límite ${limit} - Pausa extendida debido a error`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  }
+
+  return { items: allItems, processed, errors };
+}
+
+// Función robusta para sincronización por estados
+async function syncByStatusRobust(token: any) {
+  const statuses = ['active', 'paused', 'closed', 'under_review'];
+  let allItems: string[] = [];
+  let processed = 0;
+  let errors = 0;
+
+  for (const status of statuses) {
+    console.log(`📋 Sincronizando productos con estado: ${status}`);
+    try {
+      let offset = 0;
+      let hasMore = true;
+      let pageCount = 0;
+      
+      while (hasMore && pageCount < 50) {
+        pageCount++;
+        const response = await axios.get(
+          `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&offset=${offset}&limit=50`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        
+        const results = response.data.results || [];
+        if (results.length === 0) {
+          hasMore = false;
+        } else {
+          allItems = allItems.concat(results);
+          processed += results.length;
+          offset += 50;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      console.log(`📊 Estado ${status}: ${processed} productos encontrados`);
+    } catch (error) {
+      console.error(`❌ Error sincronizando estado ${status}:`, error);
+      errors++;
+    }
+  }
+
+  return { items: allItems, processed, errors };
+}
+
+// Función robusta para sincronización por fechas
+async function syncByDateRobust(token: any) {
+  let allItems: string[] = [];
+  let processed = 0;
+  let errors = 0;
+
+  // Obtener productos de los últimos 2 años por meses
+  const currentDate = new Date();
+  const months = [];
+  
+  for (let i = 0; i < 24; i++) {
+    const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+    const endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i + 1, 0);
+    months.push({
+      start: startDate.toISOString().split('T')[0],
+      end: endDate.toISOString().split('T')[0]
+    });
+  }
+
+  for (const month of months) {
+    console.log(`📋 Sincronizando productos del ${month.start} al ${month.end}`);
+    try {
+      let offset = 0;
+      let hasMore = true;
+      let pageCount = 0;
+      
+      while (hasMore && pageCount < 20) {
+        pageCount++;
+        const response = await axios.get(
+          `https://api.mercadolibre.com/users/${token.user_id}/items/search?date_created_from=${month.start}&date_created_to=${month.end}&offset=${offset}&limit=50`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        
+        const results = response.data.results || [];
+        if (results.length === 0) {
+          hasMore = false;
+        } else {
+          allItems = allItems.concat(results);
+          processed += results.length;
+          offset += 50;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      console.log(`📊 Período ${month.start}: ${processed} productos encontrados`);
+    } catch (error) {
+      console.error(`❌ Error sincronizando período ${month.start}:`, error);
+      errors++;
+    }
+  }
+
+  return { items: allItems, processed, errors };
+}
 
 // Endpoint para sincronización con múltiples límites
 router.get("/sync/force-multi-limit", async (req: Request, res: Response) => {
