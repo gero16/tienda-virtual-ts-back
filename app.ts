@@ -9,6 +9,7 @@ import colors from "colors"
 import routes from './routes/api'; 
 import mercadolibre from './routes/mercadolibre';
 import clientes from './routes/clientes'; // 🆕 Importar rutas de clientes
+import descuentos from './routes/descuentos'; // 🆕 Importar rutas de descuentos
 
 const app : Express = express();
 const port = 3000;
@@ -41,6 +42,7 @@ mercadopago.configure({
 app.use('/api', routes);
 app.use('/ml', mercadolibre);
 app.use('/api/clientes', clientes); // 🆕 Agregar rutas de clientes
+app.use('/api/descuentos', descuentos); // 🆕 Agregar rutas de descuentos
 app.get('/', (req: Request, res: Response) => {
   res.send('Ruta funcionando!');
 });

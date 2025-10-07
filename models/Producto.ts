@@ -70,6 +70,15 @@ export interface IProducto extends Document {
   // Metadatos adicionales
   es_importacion: boolean;
   requiere_stock_especial: boolean;
+  
+  // 🆕 CAMPOS PARA DESCUENTOS
+  descuento?: {
+    activo: boolean;
+    porcentaje: number; // Porcentaje de descuento (ej: 10 para 10%)
+    precio_original?: number; // Precio antes del descuento
+    fecha_inicio?: Date;
+    fecha_fin?: Date;
+  };
 }
 
 const ProductoSchema = new Schema<IProducto>({
@@ -148,7 +157,16 @@ const ProductoSchema = new Schema<IProducto>({
   
   // Metadatos adicionales
   es_importacion: { type: Boolean, default: false },
-  requiere_stock_especial: { type: Boolean, default: false }
+  requiere_stock_especial: { type: Boolean, default: false },
+  
+  // 🆕 CAMPOS PARA DESCUENTOS
+  descuento: {
+    activo: { type: Boolean, default: false },
+    porcentaje: { type: Number, default: 0 },
+    precio_original: { type: Number },
+    fecha_inicio: { type: Date },
+    fecha_fin: { type: Date }
+  }
 });
 
 export default model<IProducto>("Producto", ProductoSchema);
