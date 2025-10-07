@@ -38,6 +38,14 @@ export interface IOrden extends Document {
   
   // Totales
   subtotal: number;
+  descuento_cupon?: number;
+  cupon_aplicado?: {
+    codigo: string;
+    descripcion: string;
+    tipo: string;
+    valor: number;
+    descuento_total: number;
+  };
   total: number;
   currency: string;
   
@@ -96,6 +104,14 @@ const OrdenSchema = new Schema<IOrden>({
   
   // Totales
   subtotal: { type: Number, required: true },
+  descuento_cupon: { type: Number, default: 0 },
+  cupon_aplicado: {
+    codigo: { type: String },
+    descripcion: { type: String },
+    tipo: { type: String },
+    valor: { type: Number },
+    descuento_total: { type: Number }
+  },
   total: { type: Number, required: true },
   currency: { type: String, default: 'UYU' },
   

@@ -7,8 +7,100 @@ import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre } from "./mercadolibre"; // 🆕 Importar funciones de ML
 import { ClienteService } from "../services/clienteService"; // 🆕 Importar servicio de clientes
 import Variante from "../models/Variante"; // 🆕 Importar el modelo de Variante
+import CuponModel from "../models/Cupon"; // 🆕 Importar modelo de Cupón
 
 const router = Router();
+
+// =====================
+// Función de validación de cupones en backend
+// =====================
+const validarCuponEnBackend = async (
+  codigo: string, 
+  montoCompra: number, 
+  emailUsuario?: string
+): Promise<{
+  valido: boolean;
+  error?: string;
+  descuento?: number;
+  cupon?: any;
+}> => {
+  try {
+    const codigoUpperCase = codigo.toUpperCase().trim();
+    const cupon = await CuponModel.findOne({ codigo: codigoUpperCase });
+
+    // Validar existencia
+    if (!cupon) {
+      return { valido: false, error: "Cupón no encontrado" };
+    }
+
+    // Validar estado activo
+    if (!cupon.activo) {
+      return { valido: false, error: "Este cupón no está activo" };
+    }
+
+    // Validar fechas
+    const ahora = new Date();
+    if (cupon.fecha_inicio && ahora < cupon.fecha_inicio) {
+      return { valido: false, error: "Este cupón aún no es válido" };
+    }
+
+    if (cupon.fecha_fin && ahora > cupon.fecha_fin) {
+      return { valido: false, error: "Este cupón ha expirado" };
+    }
+
+    // Validar usos máximos
+    if (cupon.usos_maximos && cupon.usos_actuales >= cupon.usos_maximos) {
+      return { valido: false, error: "Este cupón ha alcanzado su límite de usos" };
+    }
+
+    // Validar monto mínimo
+    if (cupon.monto_minimo_compra && montoCompra < cupon.monto_minimo_compra) {
+      return { 
+        valido: false, 
+        error: `El monto mínimo de compra para este cupón es $${cupon.monto_minimo_compra}` 
+      };
+    }
+
+    // Validar límite por usuario
+    if (emailUsuario) {
+      const vecesUsado = cupon.usuarios_usados.filter(email => email === emailUsuario).length;
+      if (vecesUsado >= cupon.limite_por_usuario) {
+        return { 
+          valido: false, 
+          error: "Ya has usado este cupón el máximo de veces permitidas" 
+        };
+      }
+    }
+
+    // Calcular descuento
+    let descuento = 0;
+    if (cupon.tipo_descuento === 'porcentaje') {
+      descuento = (montoCompra * cupon.valor_descuento) / 100;
+    } else {
+      descuento = cupon.valor_descuento;
+    }
+
+    // Asegurar que el descuento no sea mayor al monto total
+    descuento = Math.min(descuento, montoCompra);
+    descuento = Math.round(descuento * 100) / 100; // Redondear a 2 decimales
+
+    return {
+      valido: true,
+      descuento: descuento,
+      cupon: {
+        _id: cupon._id,
+        codigo: cupon.codigo,
+        descripcion: cupon.descripcion,
+        tipo_descuento: cupon.tipo_descuento,
+        valor_descuento: cupon.valor_descuento
+      }
+    };
+
+  } catch (error: any) {
+    console.error(colors.red("Error validando cupón:"), error);
+    return { valido: false, error: "Error al validar el cupón" };
+  }
+};
 
 // =====================
 // Funciones auxiliares de transformación
@@ -532,7 +624,10 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       // 🆕 Nuevos campos para guardar la orden
       items,
       customer,
-      external_reference
+      external_reference,
+      // 🆕 Información de cupón aplicado
+      cupon_codigo,
+      cupon_descuento
     } = req.body;
 
     // Validar datos requeridos
@@ -560,12 +655,139 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       });
     }
 
-    // 🔒 PASO 2: VERIFICAR Y RESERVAR STOCK ATÓMICAMENTE
+    // 🔒 PASO 2: VALIDAR PRECIOS Y CALCULAR TOTAL REAL
+    console.log(colors.yellow("💰 Validando precios desde la base de datos..."));
+    let totalCalculado = 0;
+    const itemsValidados = [];
+    
+    try {
+      for (const item of transformedItems) {
+        // Obtener producto REAL de la base de datos
+        const productoReal = await ProductoModel.findOne({ ml_id: item.product_id });
+        
+        if (!productoReal) {
+          throw new Error(`Producto no encontrado: ${item.product_name}`);
+        }
+        
+        // Usar PRECIO REAL de la base de datos (no el del frontend)
+        const precioReal = productoReal.price;
+        const subtotalItem = precioReal * item.quantity;
+        totalCalculado += subtotalItem;
+        
+        console.log(colors.blue(`   Producto: ${item.product_name}`));
+        console.log(colors.blue(`   Precio en frontend: $${item.unit_price}`));
+        console.log(colors.blue(`   Precio REAL en DB: $${precioReal}`));
+        console.log(colors.blue(`   Subtotal: $${subtotalItem}`));
+        
+        // Guardar item con precio validado
+        itemsValidados.push({
+          ...item,
+          unit_price: precioReal, // PRECIO REAL
+          total_price: subtotalItem,
+          precio_validado: true
+        });
+      }
+      
+      console.log(colors.cyan(`💰 Total calculado desde DB: $${totalCalculado}`));
+      console.log(colors.cyan(`💰 Total enviado por frontend: $${transaction_amount}`));
+      
+      // VALIDAR QUE EL TOTAL COINCIDA (tolerancia de $0.10 por redondeos)
+      const diferencia = Math.abs(totalCalculado - Number(transaction_amount));
+      if (diferencia > 0.10) {
+        console.log(colors.red(`❌ FRAUDE DETECTADO: Diferencia de $${diferencia}`));
+        await session.abortTransaction();
+        session.endSession();
+        
+        return res.status(400).json({ 
+          error: "El monto no coincide con los precios reales de los productos",
+          total_esperado: totalCalculado,
+          total_recibido: transaction_amount,
+          diferencia: diferencia
+        });
+      }
+      
+      console.log(colors.green("✅ Precios validados correctamente"));
+      
+    } catch (validacionError: any) {
+      console.log(colors.red("❌ Error validando precios, abortando transacción..."));
+      await session.abortTransaction();
+      session.endSession();
+      
+      return res.status(400).json({ 
+        error: "Error al validar precios", 
+        details: validacionError.message 
+      });
+    }
+
+    // 🆕 VALIDAR CUPÓN SI SE ENVIÓ
+    let descuentoCuponValidado = 0;
+    let cuponValidado: any = null;
+    
+    if (cupon_codigo) {
+      console.log(colors.yellow(`🎟️ Validando cupón: ${cupon_codigo}...`));
+      
+      const emailCliente = customer?.email || payer?.email;
+      const validacionCupon = await validarCuponEnBackend(
+        cupon_codigo, 
+        totalCalculado, 
+        emailCliente
+      );
+      
+      if (!validacionCupon.valido) {
+        console.log(colors.red(`❌ Cupón inválido: ${validacionCupon.error}`));
+        await session.abortTransaction();
+        session.endSession();
+        
+        return res.status(400).json({ 
+          error: `Cupón inválido: ${validacionCupon.error}`,
+          cupon_rechazado: true
+        });
+      }
+      
+      descuentoCuponValidado = validacionCupon.descuento || 0;
+      cuponValidado = validacionCupon.cupon;
+      
+      console.log(colors.green(`✅ Cupón validado: ${cupon_codigo}`));
+      console.log(colors.green(`   Tipo: ${cuponValidado.tipo_descuento}`));
+      console.log(colors.green(`   Valor: ${cuponValidado.valor_descuento}${cuponValidado.tipo_descuento === 'porcentaje' ? '%' : ' UYU'}`));
+      console.log(colors.green(`   Descuento aplicado: $${descuentoCuponValidado}`));
+      
+      // Aplicar descuento del cupón al total
+      totalCalculado -= descuentoCuponValidado;
+      totalCalculado = Math.round(totalCalculado * 100) / 100; // Redondear
+      
+      console.log(colors.cyan(`💰 Total después de cupón: $${totalCalculado}`));
+    }
+    
+    // 🆕 VALIDAR TOTAL FINAL (incluyendo cupón si aplica)
+    console.log(colors.yellow("⚖️ Validando total final..."));
+    console.log(colors.cyan(`   Total calculado (con descuentos y cupón): $${totalCalculado}`));
+    console.log(colors.cyan(`   Total recibido del frontend: $${transaction_amount}`));
+    
+    const diferenciaFinal = Math.abs(totalCalculado - Number(transaction_amount));
+    if (diferenciaFinal > 0.10) {
+      console.log(colors.red(`❌ FRAUDE DETECTADO: Diferencia de $${diferenciaFinal}`));
+      await session.abortTransaction();
+      session.endSession();
+      
+      return res.status(400).json({ 
+        error: "El monto final no coincide con el total esperado",
+        total_esperado: totalCalculado,
+        total_recibido: transaction_amount,
+        diferencia: diferenciaFinal,
+        incluye_cupon: !!cupon_codigo
+      });
+    }
+    
+    console.log(colors.green("✅ Total final validado correctamente"));
+    console.log(colors.green(`   Diferencia aceptable: $${diferenciaFinal.toFixed(2)}`));
+    
+    // 🔒 PASO 3: VERIFICAR Y RESERVAR STOCK ATÓMICAMENTE
     console.log(colors.yellow("📦 Verificando y reservando stock..."));
     const stockReservations: Array<{ product_id: string; cantidad: number; stockAnterior: number }> = [];
     
     try {
-      for (const item of transformedItems) {
+      for (const item of itemsValidados) {
         console.log(colors.blue(`   Verificando stock para: ${item.product_name}`));
         
         // Buscar el producto y verificar stock en una operación atómica
@@ -614,8 +836,9 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       });
     }
 
-    // 🔒 PASO 3: PROCESAR EL PAGO (Stock ya reservado)
+    // 🔒 PASO 4: PROCESAR EL PAGO (Precios validados, Stock ya reservado)
     console.log(colors.yellow("💳 Procesando pago con MercadoPago..."));
+    console.log(colors.green("   ✅ Usando precios validados desde la base de datos"));
     
     // Crear el objeto de pago para MercadoPago
     const paymentData = {
@@ -654,7 +877,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     console.log(colors.green(`   Status: ${response.body.status}`));
     console.log(colors.green(`   Status Detail: ${response.body.status_detail}`));
     
-    // 🔒 PASO 4: DECIDIR SI HACER COMMIT O ABORT
+    // 🔒 PASO 5: DECIDIR SI HACER COMMIT O ABORT
     if (response.body.status === 'rejected' || response.body.status === 'cancelled') {
       // ❌ PAGO RECHAZADO: Hacer rollback del stock
       console.log(colors.red("❌ Pago rechazado/cancelado, haciendo rollback de stock..."));
@@ -690,11 +913,19 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         // Información del cliente
         customer: transformCustomerData(customer),
         
-        // Productos comprados - USAR LOS ITEMS TRANSFORMADOS
-        items: transformedItems,
+        // Productos comprados - USAR LOS ITEMS VALIDADOS (con precios reales)
+        items: itemsValidados,
         
         // Totales
-        subtotal: transaction_amount,
+        subtotal: transaction_amount + (descuentoCuponValidado || 0), // Subtotal antes de cupón
+        descuento_cupon: descuentoCuponValidado || 0,
+        cupon_aplicado: cuponValidado ? {
+          codigo: cuponValidado.codigo,
+          descripcion: cuponValidado.descripcion,
+          tipo: cuponValidado.tipo_descuento,
+          valor: cuponValidado.valor_descuento,
+          descuento_total: descuentoCuponValidado
+        } : undefined,
         total: transaction_amount,
         currency: 'UYU',
         
@@ -722,20 +953,50 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         }
         
         console.log(colors.green("👤 Cliente procesado exitosamente:"));
-        console.log(colors.green(`   Cliente ID: ${cliente._id}`));
-        console.log(colors.green(`   Email: ${cliente.email}`));
-        console.log(colors.green(`   Nombre: ${cliente.nombre} ${cliente.apellido}`));
-      } catch (clienteError) {
-        console.error(colors.red("❌ Error procesando cliente:"), clienteError);
-        // No fallar el pago por error de cliente, solo loggear
-      }
-      console.log(colors.green(`   Orden ID: ${nuevaOrden.orden_id}`));
-      console.log(colors.green(`   Payment ID: ${nuevaOrden.payment_id}`));
-      
-    } catch (dbError) {
-      console.error(colors.red("❌ Error guardando orden en la DB:"), dbError);
-      // No fallar el pago por error de DB, solo loggear
+      console.log(colors.green(`   Cliente ID: ${cliente._id}`));
+      console.log(colors.green(`   Email: ${cliente.email}`));
+      console.log(colors.green(`   Nombre: ${cliente.nombre} ${cliente.apellido}`));
+    } catch (clienteError) {
+      console.error(colors.red("❌ Error procesando cliente:"), clienteError);
+      // No fallar el pago por error de cliente, solo loggear
     }
+    console.log(colors.green(`   Orden ID: ${nuevaOrden.orden_id}`));
+    console.log(colors.green(`   Payment ID: ${nuevaOrden.payment_id}`));
+    
+  } catch (dbError) {
+    console.error(colors.red("❌ Error guardando orden en la DB:"), dbError);
+    // No fallar el pago por error de DB, solo loggear
+  }
+
+  // 🆕 REGISTRAR USO DEL CUPÓN SI PAGO FUE APROBADO
+  if (response.body.status === 'approved' && cuponValidado) {
+    try {
+      const emailCliente = customer?.email || payer?.email;
+      
+      console.log(colors.yellow(`🎟️ Registrando uso del cupón ${cuponValidado.codigo}...`));
+      
+      const cupon = await CuponModel.findById(cuponValidado._id);
+      if (cupon) {
+        // Incrementar usos
+        cupon.usos_actuales += 1;
+        
+        // Agregar email del usuario
+        if (emailCliente) {
+          cupon.usuarios_usados.push(emailCliente);
+        }
+        
+        await cupon.save();
+        
+        console.log(colors.green(`✅ Uso de cupón registrado:`));
+        console.log(colors.green(`   Cupón: ${cupon.codigo}`));
+        console.log(colors.green(`   Usos: ${cupon.usos_actuales}/${cupon.usos_maximos || '∞'}`));
+        console.log(colors.green(`   Usuario: ${emailCliente}`));
+      }
+    } catch (cuponError) {
+      console.error(colors.red("❌ Error registrando uso de cupón:"), cuponError);
+      // No fallar el pago por esto, solo loggear
+    }
+  }
 
     // ✅ ACTUALIZAR STOCK EN MERCADOLIBRE - USAR ITEMS TRANSFORMADOS
     if (response.body.status === 'approved' || response.body.status === 'rejected' || response.body.status === 'pending') {
@@ -747,8 +1008,8 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         if (token) {
           console.log(colors.blue("   🔑 Token de ML obtenido, actualizando stock..."));
           
-          // 🔧 USAR transformedItems EN LUGAR DE items
-          for (const item of transformedItems) {
+          // 🔧 USAR itemsValidados (con precios validados)
+          for (const item of itemsValidados) {
             try {
               // 🔧 OBTENER STOCK ACTUAL DESDE MERCADOLIBRE
               const currentStock = await getCurrentStockFromMercadoLibre(item.product_id, token.access_token);
@@ -778,7 +1039,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       console.log(colors.yellow(`⚠️ Status de pago no reconocido: ${response.body.status}`));
     }
 
-    // 🔒 PASO 5: CONFIRMAR TRANSACCIÓN (Todo salió bien)
+    // 🔒 PASO 6: CONFIRMAR TRANSACCIÓN (Todo salió bien)
     await session.commitTransaction();
     session.endSession();
     console.log(colors.green("✅ Transacción confirmada - Stock actualizado permanentemente"));
@@ -792,7 +1053,9 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       installments: response.body.installments,
       date_approved: response.body.date_approved,
       date_created: response.body.date_created,
-      stock_reservado: true // Indicador de que el stock fue manejado correctamente
+      stock_reservado: true, // Indicador de que el stock fue manejado correctamente
+      precios_validados: true, // Indicador de que los precios fueron validados desde DB
+      total_validado: totalCalculado
     });
 
   } catch (error: any) {
