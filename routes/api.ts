@@ -1,6 +1,7 @@
 import mercadopago from "mercadopago";
 import express, { Router, Request, Response } from "express";
 import colors from "colors";
+import mongoose from "mongoose"; // 🆕 Para transacciones atómicas
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre } from "./mercadolibre"; // 🆕 Importar funciones de ML
@@ -8,6 +9,99 @@ import { ClienteService } from "../services/clienteService"; // 🆕 Importar se
 import Variante from "../models/Variante"; // 🆕 Importar el modelo de Variante
 
 const router = Router();
+
+// =====================
+// Funciones auxiliares de transformación
+// =====================
+const transformCustomerData = (customer: any) => {
+  if (!customer) {
+    return {
+      name: "Cliente",
+      email: "test@example.com",
+      phone: "099999999",
+      address: "Dirección no especificada",
+      city: "Ciudad",
+      state: "Estado"
+    };
+  }
+
+  // Si phone es un objeto, extraer el número
+  let phone = customer.phone;
+  if (typeof phone === "object" && phone.number) {
+    phone = phone.number;
+  }
+
+  // Si address es un objeto, crear una dirección string
+  let address = customer.address;
+  if (typeof address === "object" && address.street_name) {
+    address = `${address.street_name} ${address.street_number || ""}`.trim();
+  }
+
+  return {
+    name: customer.name || "Cliente",
+    email: customer.email || "test@example.com",
+    phone: phone || "099999999",
+    address: address || "Dirección no especificada",
+    city: customer.city || "Ciudad",
+    state: customer.state || "Estado"
+  };
+};
+
+const transformItemsData = async (items: any) => {
+  if (!items || !Array.isArray(items)) {
+    return [];
+  }
+
+  const transformedItems = [];
+  
+  for (const item of items) {
+    let mlId = item.id?.toString();
+    
+    console.log(`🔍 Debug item:`, {
+      id: item.id,
+      title: item.title,
+      name: item.name,
+      variant_id: item.variant_id
+    });
+    
+    // Si el item.id no es un ml_id, buscar en la base de datos
+    if (item.id && !item.id.toString().startsWith('MLA')) {
+      console.log(`🔍 Buscando ml_id para item ${item.id}`);
+      try {
+        // Buscar como producto principal
+        const producto = await ProductoModel.findOne({ _id: item.id });
+        console.log(`🔍 Producto encontrado:`, producto ? { _id: producto._id, ml_id: producto.ml_id } : 'No encontrado');
+        if (producto && producto.ml_id) {
+          mlId = producto.ml_id;
+          console.log(`✅ ml_id encontrado en producto: ${mlId}`);
+        } else {
+          // Buscar como variante
+          const variante = await Variante.findOne({ _id: item.id });
+          console.log(`🔍 Variante encontrada:`, variante ? { _id: variante._id, id: variante.id } : 'No encontrada');
+          if (variante && variante.id) {
+            mlId = variante.id;
+            console.log(`✅ ml_id encontrado en variante: ${mlId}`);
+          }
+        }
+      } catch (dbError: any) {
+        console.log(`⚠️ Error buscando ml_id para item ${item.id}:`, dbError.message);
+      }
+    }
+
+    transformedItems.push({
+      product_id: mlId || item.id?.toString() || `item-${Date.now()}-${Math.random()}`,
+      product_name: item.title || item.name || `Producto ${transformedItems.length + 1}`,
+      variant_id: item.variant_id || undefined,
+      color: item.color || undefined,
+      size: item.size || undefined,
+      quantity: item.quantity || item.cantidad || 1,
+      unit_price: item.unit_price || item.price || 0,
+      total_price: (item.quantity || item.cantidad || 1) * (item.unit_price || item.price || 0)
+    });
+  }
+  
+  return transformedItems;
+};
 
 // =====================
 // Tipos auxiliares (compatibles con MercadoPago)
@@ -418,6 +512,9 @@ router.get("/orders/:id", async (req: Request, res: Response) => {
 // Procesar pagos con Payment Brick
 // =====================
 router.post("/process_payment", async (req: Request, res: Response) => {
+  // 🔒 Iniciar sesión de MongoDB para transacciones atómicas
+  const session = await mongoose.startSession();
+  
   try {
     if (!mpAccessToken) {
       return res.status(500).json({ 
@@ -449,6 +546,77 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     console.log(colors.blue(`💰 Monto: $${transaction_amount}`));
     console.log(colors.blue(`💳 Método: ${payment_method_id}`));
 
+    // 🔒 PASO 1: INICIAR TRANSACCIÓN Y VERIFICAR/RESERVAR STOCK
+    console.log(colors.yellow("🔒 Iniciando transacción para reservar stock..."));
+    session.startTransaction();
+    
+    // Transformar items antes de validar stock
+    const transformedItems = await transformItemsData(items);
+    
+    if (!transformedItems || transformedItems.length === 0) {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        error: "No hay items válidos en la orden" 
+      });
+    }
+
+    // 🔒 PASO 2: VERIFICAR Y RESERVAR STOCK ATÓMICAMENTE
+    console.log(colors.yellow("📦 Verificando y reservando stock..."));
+    const stockReservations: Array<{ product_id: string; cantidad: number; stockAnterior: number }> = [];
+    
+    try {
+      for (const item of transformedItems) {
+        console.log(colors.blue(`   Verificando stock para: ${item.product_name}`));
+        
+        // Buscar el producto y verificar stock en una operación atómica
+        const producto = await ProductoModel.findOneAndUpdate(
+          { 
+            ml_id: item.product_id,
+            available_quantity: { $gte: item.quantity } // Solo actualizar si hay stock suficiente
+          },
+          { 
+            $inc: { available_quantity: -item.quantity } // Reducir stock atómicamente
+          },
+          { 
+            session, // Usar la sesión de transacción
+            new: true // Devolver el documento actualizado
+          }
+        );
+        
+        if (!producto) {
+          // No hay stock suficiente o producto no existe
+          console.log(colors.red(`   ❌ Stock insuficiente para: ${item.product_name}`));
+          throw new Error(`Stock insuficiente para el producto: ${item.product_name}. Por favor actualiza tu carrito.`);
+        }
+        
+        console.log(colors.green(`   ✅ Stock reservado: ${item.quantity} unidades de ${item.product_name}`));
+        console.log(colors.green(`      Stock anterior: ${producto.available_quantity + item.quantity} → Nuevo: ${producto.available_quantity}`));
+        
+        // Guardar info de la reserva para posible rollback
+        stockReservations.push({
+          product_id: item.product_id,
+          cantidad: item.quantity,
+          stockAnterior: producto.available_quantity + item.quantity
+        });
+      }
+      
+      console.log(colors.green("✅ Stock reservado exitosamente para todos los productos"));
+      
+    } catch (stockError: any) {
+      // Si falla la reserva de stock, abortar transacción
+      console.log(colors.red("❌ Error reservando stock, abortando transacción..."));
+      await session.abortTransaction();
+      session.endSession();
+      
+      return res.status(400).json({ 
+        error: "Error al verificar stock", 
+        details: stockError.message 
+      });
+    }
+
+    // 🔒 PASO 3: PROCESAR EL PAGO (Stock ya reservado)
+    console.log(colors.yellow("💳 Procesando pago con MercadoPago..."));
+    
     // Crear el objeto de pago para MercadoPago
     const paymentData = {
       transaction_amount: Number(transaction_amount),
@@ -466,106 +634,43 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     };
 
     // Procesar el pago con MercadoPago
-    const response = await mercadopago.payment.save(paymentData);
+    let response;
+    try {
+      response = await mercadopago.payment.save(paymentData);
+    } catch (paymentError: any) {
+      // Si el pago falla, hacer rollback del stock
+      console.log(colors.red("❌ Error procesando pago, haciendo rollback de stock..."));
+      await session.abortTransaction();
+      session.endSession();
+      
+      return res.status(500).json({ 
+        error: "Error procesando el pago", 
+        details: paymentError.message 
+      });
+    }
     
     console.log(colors.green("✅ Pago procesado exitosamente:"));
     console.log(colors.green(`   ID: ${response.body.id}`));
     console.log(colors.green(`   Status: ${response.body.status}`));
     console.log(colors.green(`   Status Detail: ${response.body.status_detail}`));
-
-    // 🆕 FUNCIONES DE TRANSFORMACIÓN DE DATOS
-    const transformCustomerData = (customer: any) => {
-      if (!customer) {
-        return {
-          name: "Cliente",
-          email: "test@example.com",
-          phone: "099999999",
-          address: "Dirección no especificada",
-          city: "Ciudad",
-          state: "Estado"
-        };
-      }
-
-      // Si phone es un objeto, extraer el número
-      let phone = customer.phone;
-      if (typeof phone === "object" && phone.number) {
-        phone = phone.number;
-      }
-
-      // Si address es un objeto, crear una dirección string
-      let address = customer.address;
-      if (typeof address === "object" && address.street_name) {
-        address = `${address.street_name} ${address.street_number || ""}`.trim();
-      }
-
-      return {
-        name: customer.name || "Cliente",
-        email: customer.email || "test@example.com",
-        phone: phone || "099999999",
-        address: address || "Dirección no especificada",
-        city: customer.city || "Ciudad",
-        state: customer.state || "Estado"
-      };
-    };
-
-        const transformItemsData = async (items: any) => {
-      if (!items || !Array.isArray(items)) {
-        return [];
-      }
-
-      const transformedItems = [];
+    
+    // 🔒 PASO 4: DECIDIR SI HACER COMMIT O ABORT
+    if (response.body.status === 'rejected' || response.body.status === 'cancelled') {
+      // ❌ PAGO RECHAZADO: Hacer rollback del stock
+      console.log(colors.red("❌ Pago rechazado/cancelado, haciendo rollback de stock..."));
+      await session.abortTransaction();
+      session.endSession();
       
-      for (const item of items) {
-        let mlId = item.id?.toString();
-        
-        console.log(`🔍 Debug item:`, {
-          id: item.id,
-          title: item.title,
-          name: item.name,
-          variant_id: item.variant_id
-        });
-        
-        // Si el item.id no es un ml_id, buscar en la base de datos
-        if (item.id && !item.id.toString().startsWith('MLA')) {
-          console.log(`🔍 Buscando ml_id para item ${item.id}`);
-          try {
-            // Buscar como producto principal
-            const producto = await ProductoModel.findOne({ _id: item.id });
-            console.log(`🔍 Producto encontrado:`, producto ? { _id: producto._id, ml_id: producto.ml_id } : 'No encontrado');
-            if (producto && producto.ml_id) {
-              mlId = producto.ml_id;
-              console.log(`✅ ml_id encontrado en producto: ${mlId}`);
-            } else {
-              // Buscar como variante
-              const variante = await Variante.findOne({ _id: item.id });
-              console.log(`🔍 Variante encontrada:`, variante ? { _id: variante._id, id: variante.id } : 'No encontrada');
-              if (variante && variante.id) {
-                mlId = variante.id;
-                console.log(`✅ ml_id encontrado en variante: ${mlId}`);
-              }
-            }
-          } catch (dbError: any) {
-            console.log(`⚠️ Error buscando ml_id para item ${item.id}:`, dbError.message);
-          }
-        }
-
-        transformedItems.push({
-          product_id: mlId || item.id?.toString() || `item-${Date.now()}-${Math.random()}`,
-          product_name: item.title || item.name || `Producto ${transformedItems.length + 1}`,
-          variant_id: item.variant_id || undefined,
-          color: item.color || undefined,
-          size: item.size || undefined,
-          quantity: item.quantity || item.cantidad || 1,
-          unit_price: item.unit_price || item.price || 0,
-          total_price: (item.quantity || item.cantidad || 1) * (item.unit_price || item.price || 0)
-        });
-      }
-      
-      return transformedItems;
-    };
-
-    // 🔧 TRANSFORMAR ITEMS ANTES DE USAR - MOVER FUERA DEL TRY
-    const transformedItems = await transformItemsData(items);
+      return res.json({
+        id: response.body.id,
+        status: response.body.status,
+        status_detail: response.body.status_detail,
+        message: "Pago no aprobado, stock restaurado"
+      });
+    }
+    
+    // ✅ PAGO APROBADO o PENDIENTE: Confirmar la transacción
+    console.log(colors.green("✅ Confirmando transacción de stock..."));
 
     // 🆕 GUARDAR LA ORDEN EN LA BASE DE DATOS
     try {
@@ -673,6 +778,11 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       console.log(colors.yellow(`⚠️ Status de pago no reconocido: ${response.body.status}`));
     }
 
+    // 🔒 PASO 5: CONFIRMAR TRANSACCIÓN (Todo salió bien)
+    await session.commitTransaction();
+    session.endSession();
+    console.log(colors.green("✅ Transacción confirmada - Stock actualizado permanentemente"));
+
     return res.json({
       id: response.body.id,
       status: response.body.status,
@@ -681,11 +791,21 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       payment_method_id: response.body.payment_method_id,
       installments: response.body.installments,
       date_approved: response.body.date_approved,
-      date_created: response.body.date_created
+      date_created: response.body.date_created,
+      stock_reservado: true // Indicador de que el stock fue manejado correctamente
     });
 
   } catch (error: any) {
     console.error(colors.red("❌ Error procesando pago:"), error);
+    
+    // 🔒 IMPORTANTE: Abortar transacción en caso de error
+    try {
+      await session.abortTransaction();
+      session.endSession();
+      console.log(colors.yellow("🔄 Transacción abortada - Stock restaurado"));
+    } catch (abortError) {
+      console.error(colors.red("❌ Error abortando transacción:"), abortError);
+    }
     
     // Manejar errores específicos de MercadoPago
     if (error.response && error.response.data) {
