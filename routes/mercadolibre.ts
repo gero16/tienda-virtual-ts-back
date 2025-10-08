@@ -795,8 +795,45 @@ async function forceUpdateProductos() {
   console.log(`📊 Total de productos en base de datos: ${await Producto.countDocuments()}`);
 }
 
+// 🚀 Endpoint OPTIMIZADO con paginación para carga rápida
 router.get("/productos", async (req: Request, res: Response) => {
   try {
+    const { limit, skip, page } = req.query;
+    
+    // Si se especifica limit, usar paginación
+    if (limit) {
+      const limitNum = parseInt(limit as string) || 50;
+      const skipNum = skip ? parseInt(skip as string) : 0;
+      const pageNum = page ? parseInt(page as string) : 1;
+      
+      // Calcular skip basado en página si se proporciona
+      const actualSkip = page ? (pageNum - 1) * limitNum : skipNum;
+      
+      // Obtener total de productos para metadata
+      const total = await Producto.countDocuments();
+      
+      // Obtener productos con paginación (más rápido)
+      const productos = await Producto.find()
+        .populate("variantes")
+        .limit(limitNum)
+        .skip(actualSkip)
+        .lean(); // 🚀 .lean() hace la query más rápida (sin métodos de Mongoose)
+      
+      // Respuesta con metadata de paginación
+      return res.json({
+        productos,
+        pagination: {
+          total,
+          limit: limitNum,
+          skip: actualSkip,
+          page: pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          hasMore: actualSkip + limitNum < total
+        }
+      });
+    }
+    
+    // Si no se especifica limit, devolver todos (comportamiento original para compatibilidad)
     const productos = await Producto.find().populate("variantes");
     res.json(productos);
   } catch (err: any) {
