@@ -860,25 +860,47 @@ router.get("/productos/:id", async (req: Request, res: Response) => {
 // 🔍 Endpoint de DEBUG para analizar shipping de productos
 router.get("/debug-shipping", async (req: Request, res: Response) => {
   try {
-    const productos = await Producto.find().limit(20).lean();
+    const limit = parseInt(req.query.limit as string) || 100;
+    const productos = await Producto.find().limit(limit).lean();
     
     const shippingInfo = productos.map(p => ({
       ml_id: p.ml_id,
       title: p.title?.substring(0, 50),
       shipping: p.shipping,
       logistic_type: p.shipping?.logistic_type,
+      shipping_mode: p.shipping?.mode,
+      shipping_tags: p.shipping?.tags,
+      tags: p.tags, // Tags generales del producto
       dropshipping: p.dropshipping,
       dias_preparacion: p.dias_preparacion,
-      dias_envio_estimado: p.dias_envio_estimado
+      dias_envio_estimado: p.dias_envio_estimado,
+      available_quantity: p.available_quantity
     }));
+    
+    // Agrupar por logistic_type
+    const logisticTypes = productos.reduce((acc: any, p) => {
+      const type = p.shipping?.logistic_type || 'sin_logistic_type';
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {});
+    
+    // Buscar tags únicos en shipping
+    const shippingTags = new Set<string>();
+    productos.forEach(p => {
+      p.shipping?.tags?.forEach((tag: string) => shippingTags.add(tag));
+    });
     
     const stats = {
       total: productos.length,
       con_shipping: productos.filter(p => p.shipping && Object.keys(p.shipping).length > 0).length,
       con_logistic_type: productos.filter(p => p.shipping?.logistic_type).length,
+      logistic_types: logisticTypes,
+      shipping_tags_unicos: Array.from(shippingTags),
       flex: productos.filter(p => p.shipping?.logistic_type === 'fulfillment').length,
+      xd_drop_off: productos.filter(p => p.shipping?.logistic_type === 'xd_drop_off').length,
       con_dropshipping: productos.filter(p => p.dropshipping).length,
-      con_dias_preparacion: productos.filter(p => p.dias_preparacion).length
+      con_dias_preparacion: productos.filter(p => p.dias_preparacion).length,
+      con_stock: productos.filter(p => p.available_quantity > 0).length
     };
     
     res.json({ stats, productos: shippingInfo });
