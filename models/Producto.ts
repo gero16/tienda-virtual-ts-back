@@ -27,7 +27,13 @@ export interface IProducto extends Document {
   category_id: string;
   condition: string;
   listing_type_id: string;
-  shipping: any;
+  shipping: {
+    logistic_type?: string; // 'fulfillment' (Flex), 'self_service', 'cross_docking', etc.
+    mode?: string;
+    free_shipping?: boolean;
+    tags?: string[];
+    [key: string]: any;
+  };
   health: number;
   metrics: {
     visits: number;

@@ -857,6 +857,36 @@ router.get("/productos/:id", async (req: Request, res: Response) => {
   }
 });
 
+// 🔍 Endpoint de DEBUG para analizar shipping de productos
+router.get("/debug-shipping", async (req: Request, res: Response) => {
+  try {
+    const productos = await Producto.find().limit(20).lean();
+    
+    const shippingInfo = productos.map(p => ({
+      ml_id: p.ml_id,
+      title: p.title?.substring(0, 50),
+      shipping: p.shipping,
+      logistic_type: p.shipping?.logistic_type,
+      dropshipping: p.dropshipping,
+      dias_preparacion: p.dias_preparacion,
+      dias_envio_estimado: p.dias_envio_estimado
+    }));
+    
+    const stats = {
+      total: productos.length,
+      con_shipping: productos.filter(p => p.shipping && Object.keys(p.shipping).length > 0).length,
+      con_logistic_type: productos.filter(p => p.shipping?.logistic_type).length,
+      flex: productos.filter(p => p.shipping?.logistic_type === 'fulfillment').length,
+      con_dropshipping: productos.filter(p => p.dropshipping).length,
+      con_dias_preparacion: productos.filter(p => p.dias_preparacion).length
+    };
+    
+    res.json({ stats, productos: shippingInfo });
+  } catch (err: any) {
+    res.status(500).send("❌ Error: " + err.message);
+  }
+});
+
 // Endpoint simple para obtener categorías básicas
 router.get("/categorias-simples", async (req: Request, res: Response) => {
   try {
