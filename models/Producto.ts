@@ -69,13 +69,19 @@ export interface IProducto extends Document {
     tiempo_configurado_en_ml?: boolean;
   };
   
+  // Campos de nivel raíz para dropshipping (compatibilidad y acceso rápido)
+  dias_preparacion?: number;
+  dias_envio_estimado?: number;
+  proveedor?: string;
+  pais_origen?: string;
+  
   // Tiempos de entrega (calculados automáticamente)
-  tiempo_entrega_total: number; // días totales
-  tiempo_entrega_texto: string; // "18 días + envío"
+  tiempo_entrega_total?: number; // días totales
+  tiempo_entrega_texto?: string; // "18 días + envío"
   
   // Metadatos adicionales
-  es_importacion: boolean;
-  requiere_stock_especial: boolean;
+  es_importacion?: boolean;
+  requiere_stock_especial?: boolean;
   
   // 🆕 CAMPOS PARA DESCUENTOS
   descuento?: {
@@ -157,9 +163,15 @@ const ProductoSchema = new Schema<IProducto>({
     tiempo_configurado_en_ml: { type: Boolean, default: false }
   },
   
+  // Campos de nivel raíz para dropshipping (compatibilidad y acceso rápido)
+  dias_preparacion: { type: Number },
+  dias_envio_estimado: { type: Number },
+  proveedor: { type: String },
+  pais_origen: { type: String },
+  
   // Tiempos de entrega (calculados automáticamente)
-  tiempo_entrega_total: { type: Number, default: 0 },
-  tiempo_entrega_texto: { type: String, default: "" },
+  tiempo_entrega_total: { type: Number },
+  tiempo_entrega_texto: { type: String },
   
   // Metadatos adicionales
   es_importacion: { type: Boolean, default: false },
