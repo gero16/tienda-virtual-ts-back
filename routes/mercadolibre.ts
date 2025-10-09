@@ -1684,7 +1684,7 @@ async function robustSyncProductos() {
   // Estrategia 1: Paginación estándar con límite 50
   console.log("📋 Estrategia 1: Paginación estándar (límite 50)");
   try {
-    const strategy1 = await paginateWithLimitRobust(token, 50, 100);
+    const strategy1 = await paginateWithLimitRobust(token, 50, 200);
     allItems = [...new Set([...allItems, ...strategy1.items])];
     totalProcessed += strategy1.processed;
     totalErrors += strategy1.errors;
@@ -1701,7 +1701,7 @@ async function robustSyncProductos() {
   // Estrategia 2: Paginación con límite 25 (más páginas)
   console.log("📋 Estrategia 2: Paginación con límite 25");
   try {
-    const strategy2 = await paginateWithLimitRobust(token, 25, 150);
+    const strategy2 = await paginateWithLimitRobust(token, 25, 300);
     allItems = [...new Set([...allItems, ...strategy2.items])];
     totalProcessed += strategy2.processed;
     totalErrors += strategy2.errors;
@@ -1747,6 +1747,74 @@ async function robustSyncProductos() {
     });
   } catch (error) {
     console.error("❌ Error en estrategia 4:", error);
+  }
+
+  // Estrategia 5: Paginación granular con límite 10 (para capturar productos intermedios)
+  console.log("📋 Estrategia 5: Paginación granular (límite 10)");
+  try {
+    const strategy5 = await paginateWithLimitRobust(token, 10, 500);
+    allItems = [...new Set([...allItems, ...strategy5.items])];
+    totalProcessed += strategy5.processed;
+    totalErrors += strategy5.errors;
+    strategies.push({ 
+      name: "Paginación Granular", 
+      items: strategy5.items.length, 
+      processed: strategy5.processed, 
+      errors: strategy5.errors 
+    });
+  } catch (error) {
+    console.error("❌ Error en estrategia 5:", error);
+  }
+
+  // Estrategia 6: Paginación con límite 100 (máximo permitido)
+  console.log("📋 Estrategia 6: Paginación con límite 100");
+  try {
+    const strategy6 = await paginateWithLimitRobust(token, 100, 100);
+    allItems = [...new Set([...allItems, ...strategy6.items])];
+    totalProcessed += strategy6.processed;
+    totalErrors += strategy6.errors;
+    strategies.push({ 
+      name: "Paginación 100", 
+      items: strategy6.items.length, 
+      processed: strategy6.processed, 
+      errors: strategy6.errors 
+    });
+  } catch (error) {
+    console.error("❌ Error en estrategia 6:", error);
+  }
+
+  // Estrategia 7: Sincronización por categorías
+  console.log("📋 Estrategia 7: Sincronización por categorías");
+  try {
+    const strategy7 = await syncByCategoriesRobust(token);
+    allItems = [...new Set([...allItems, ...strategy7.items])];
+    totalProcessed += strategy7.processed;
+    totalErrors += strategy7.errors;
+    strategies.push({ 
+      name: "Por Categorías", 
+      items: strategy7.items.length, 
+      processed: strategy7.processed, 
+      errors: strategy7.errors 
+    });
+  } catch (error) {
+    console.error("❌ Error en estrategia 7:", error);
+  }
+
+  // Estrategia 8: Sincronización con diferentes ordenamientos
+  console.log("📋 Estrategia 8: Sincronización por ordenamiento");
+  try {
+    const strategy8 = await syncByOrderingRobust(token);
+    allItems = [...new Set([...allItems, ...strategy8.items])];
+    totalProcessed += strategy8.processed;
+    totalErrors += strategy8.errors;
+    strategies.push({ 
+      name: "Por Ordenamiento", 
+      items: strategy8.items.length, 
+      processed: strategy8.processed, 
+      errors: strategy8.errors 
+    });
+  } catch (error) {
+    console.error("❌ Error en estrategia 8:", error);
   }
 
   console.log(`🎉 DETECCIÓN ROBUSTA COMPLETADA:`);
@@ -2022,7 +2090,7 @@ async function syncByStatusRobust(token: any) {
       let hasMore = true;
       let pageCount = 0;
       
-      while (hasMore && pageCount < 50) {
+      while (hasMore && pageCount < 100) {
         pageCount++;
         const response = await axios.get(
           `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&offset=${offset}&limit=50`,
@@ -2077,7 +2145,7 @@ async function syncByDateRobust(token: any) {
       let hasMore = true;
       let pageCount = 0;
       
-      while (hasMore && pageCount < 20) {
+      while (hasMore && pageCount < 50) {
         pageCount++;
         const response = await axios.get(
           `https://api.mercadolibre.com/users/${token.user_id}/items/search?date_created_from=${month.start}&date_created_to=${month.end}&offset=${offset}&limit=50`,
@@ -2099,6 +2167,128 @@ async function syncByDateRobust(token: any) {
       console.log(`📊 Período ${month.start}: ${processed} productos encontrados`);
     } catch (error) {
       console.error(`❌ Error sincronizando período ${month.start}:`, error);
+      errors++;
+    }
+  }
+
+  return { items: allItems, processed, errors };
+}
+
+// Función robusta para sincronización por categorías
+async function syncByCategoriesRobust(token: any) {
+  let allItems: string[] = [];
+  let processed = 0;
+  let errors = 0;
+
+  console.log("📋 Obteniendo categorías únicas de productos...");
+  
+  try {
+    // Primero obtenemos una muestra de productos para identificar categorías
+    const sampleResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}/items/search?limit=100`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+    
+    const sampleItems = sampleResponse.data.results || [];
+    const categories = new Set<string>();
+    
+    // Obtener categorías de la muestra
+    for (const itemId of sampleItems.slice(0, 50)) {
+      try {
+        const itemResponse = await axios.get(
+          `https://api.mercadolibre.com/items/${itemId}`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        if (itemResponse.data.category_id) {
+          categories.add(itemResponse.data.category_id);
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        // Continuar si falla un item
+      }
+    }
+    
+    console.log(`📊 Categorías encontradas: ${categories.size}`);
+    
+    // Sincronizar por cada categoría
+    for (const categoryId of Array.from(categories)) {
+      console.log(`📋 Sincronizando categoría: ${categoryId}`);
+      try {
+        let offset = 0;
+        let hasMore = true;
+        let pageCount = 0;
+        
+        while (hasMore && pageCount < 50) {
+          pageCount++;
+          const response = await axios.get(
+            `https://api.mercadolibre.com/users/${token.user_id}/items/search?category=${categoryId}&offset=${offset}&limit=50`,
+            { headers: { Authorization: `Bearer ${token.access_token}` } }
+          );
+          
+          const results = response.data.results || [];
+          if (results.length === 0) {
+            hasMore = false;
+          } else {
+            allItems = allItems.concat(results);
+            processed += results.length;
+            offset += 50;
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        
+        console.log(`📊 Categoría ${categoryId}: ${processed} productos encontrados`);
+      } catch (error) {
+        console.error(`❌ Error sincronizando categoría ${categoryId}:`, error);
+        errors++;
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error obteniendo categorías:", error);
+    errors++;
+  }
+
+  return { items: allItems, processed, errors };
+}
+
+// Función robusta para sincronización con diferentes ordenamientos
+async function syncByOrderingRobust(token: any) {
+  let allItems: string[] = [];
+  let processed = 0;
+  let errors = 0;
+
+  // Diferentes tipos de ordenamiento que pueden devolver resultados en distintos órdenes
+  const sortOptions = ['price_asc', 'price_desc'];
+  
+  for (const sort of sortOptions) {
+    console.log(`📋 Sincronizando con orden: ${sort}`);
+    try {
+      let offset = 0;
+      let hasMore = true;
+      let pageCount = 0;
+      
+      while (hasMore && pageCount < 100) {
+        pageCount++;
+        const response = await axios.get(
+          `https://api.mercadolibre.com/users/${token.user_id}/items/search?sort=${sort}&offset=${offset}&limit=50`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        
+        const results = response.data.results || [];
+        if (results.length === 0) {
+          hasMore = false;
+        } else {
+          allItems = allItems.concat(results);
+          processed += results.length;
+          offset += 50;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      console.log(`📊 Orden ${sort}: ${processed} productos encontrados`);
+    } catch (error) {
+      console.error(`❌ Error sincronizando con orden ${sort}:`, error);
       errors++;
     }
   }
