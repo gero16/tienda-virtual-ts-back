@@ -841,6 +841,91 @@ router.get("/productos", async (req: Request, res: Response) => {
   }
 });
 
+// 🚀 ENDPOINTS OPTIMIZADOS PARA HOMEPAGE - Solo datos esenciales
+// ================================================================
+
+// Endpoint para productos más vendidos (bestsellers)
+router.get("/productos/bestsellers", async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 12;
+    
+    const productos = await Producto.find({
+      status: { $ne: 'paused' },
+      sold_quantity: { $gt: 0 }
+    })
+    .select('ml_id title price sold_quantity main_image images status metrics descuento') // Solo campos necesarios
+    .sort({ sold_quantity: -1 })
+    .limit(limit)
+    .lean();
+    
+    res.setHeader('Cache-Control', 'public, max-age=300'); // Cache 5 minutos
+    res.json(productos);
+  } catch (err: any) {
+    res.status(500).json({ error: "Error al obtener bestsellers: " + err.message });
+  }
+});
+
+// Endpoint para productos destacados (featured)
+router.get("/productos/featured", async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 12;
+    
+    const productos = await Producto.find({
+      status: { $ne: 'paused' },
+      available_quantity: { $gt: 0 }
+    })
+    .select('ml_id title price main_image images status metrics health descuento available_quantity')
+    .lean();
+    
+    // Calcular score en backend
+    const productosConScore = productos.map(p => {
+      const visitas = p.metrics?.visits || 0;
+      const rating = p.metrics?.reviews.rating_average || 0;
+      const totalReseñas = p.metrics?.reviews.total || 0;
+      const health = p.health || 0;
+      
+      const score = (visitas * 0.3) + (rating * 10) + (totalReseñas * 3) + (health * 5);
+      
+      return { ...p, score };
+    });
+    
+    // Ordenar y limitar
+    const featured = productosConScore
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+    
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json(featured);
+  } catch (err: any) {
+    res.status(500).json({ error: "Error al obtener featured: " + err.message });
+  }
+});
+
+// Endpoint para productos con descuento
+router.get("/productos/discounted", async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 8;
+    
+    const productos = await Producto.find({
+      'descuento.activo': true,
+      status: 'active',
+      available_quantity: { $gt: 0 },
+      $or: [
+        { 'images.0.url': { $exists: true } },
+        { main_image: { $exists: true, $ne: null } }
+      ]
+    })
+    .select('ml_id title price main_image images descuento available_quantity status')
+    .limit(limit)
+    .lean();
+    
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json(productos);
+  } catch (err: any) {
+    res.status(500).json({ error: "Error al obtener discounted: " + err.message });
+  }
+});
+
 // Endpoint para obtener un producto específico por ID
 router.get("/productos/:id", async (req: Request, res: Response) => {
   try {
