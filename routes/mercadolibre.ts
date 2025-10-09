@@ -2069,11 +2069,11 @@ async function syncByDateRobust(token: any) {
   let processed = 0;
   let errors = 0;
 
-  // Obtener productos de los últimos 3 años por meses
+  // Obtener productos de los últimos 5 años por meses (60 meses)
   const currentDate = new Date();
   const months = [];
   
-  for (let i = 0; i < 36; i++) {
+  for (let i = 0; i < 60; i++) {
     const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
     const endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i + 1, 0);
     months.push({
