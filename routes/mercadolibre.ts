@@ -1732,15 +1732,15 @@ async function robustSyncProductos() {
     console.error("❌ Error en estrategia 3:", error);
   }
 
-  // Estrategia 4: Sincronización por fechas (últimos 2 años)
-  console.log("📋 Estrategia 4: Sincronización por fechas");
+  // Estrategia 4: Sincronización combinada (estado + fecha) para máxima cobertura
+  console.log("📋 Estrategia 4: Sincronización combinada (estado + fecha)");
   try {
-    const strategy4 = await syncByDateRobust(token);
+    const strategy4 = await syncByStatusAndDateRobust(token);
     allItems = [...new Set([...allItems, ...strategy4.items])];
     totalProcessed += strategy4.processed;
     totalErrors += strategy4.errors;
     strategies.push({ 
-      name: "Por Fechas", 
+      name: "Estado + Fecha", 
       items: strategy4.items.length, 
       processed: strategy4.processed, 
       errors: strategy4.errors 
@@ -2063,71 +2063,125 @@ async function syncByStatusRobust(token: any) {
   return { items: allItems, processed, errors };
 }
 
-// Función robusta para sincronización por fechas (POR SEMANAS para mayor granularidad)
-async function syncByDateRobust(token: any) {
+// Función para sincronizar combinando ESTADO + FECHA (optimizada)
+async function syncByStatusAndDateRobust(token: any) {
   let allItems: string[] = [];
   let processed = 0;
   let errors = 0;
 
-  // Obtener productos de los últimos 5 años por SEMANAS (260 semanas = 5 años)
+  const statuses = ['active', 'paused'];
   const currentDate = new Date();
-  const weeks = [];
   
-  for (let i = 0; i < 260; i++) {
-    const endDate = new Date(currentDate);
-    endDate.setDate(endDate.getDate() - (i * 7));
-    const startDate = new Date(endDate);
-    startDate.setDate(startDate.getDate() - 6);
-    
-    weeks.push({
+  // PARTE 1: Últimos 90 días POR DÍA (productos recientes muy densos)
+  console.log(`📋 Sincronizando últimos 90 días por día + estado...`);
+  const recentDays = [];
+  for (let i = 0; i < 90; i++) {
+    const date = new Date(currentDate);
+    date.setDate(date.getDate() - i);
+    recentDays.push(date.toISOString().split('T')[0]);
+  }
+  
+  for (const status of statuses) {
+    for (const day of recentDays) {
+      try {
+        let offset = 0;
+        let hasMore = true;
+        let dayProcessed = 0;
+        
+        while (hasMore) {
+          try {
+            const response = await axios.get(
+              `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&date_created_from=${day}&date_created_to=${day}&offset=${offset}&limit=50`,
+              { headers: { Authorization: `Bearer ${token.access_token}` } }
+            );
+            
+            const results = response.data.results || [];
+            if (results.length === 0) {
+              hasMore = false;
+            } else {
+              allItems = allItems.concat(results);
+              processed += results.length;
+              dayProcessed += results.length;
+              offset += 50;
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 150));
+          } catch (error: any) {
+            if (error.response?.status === 400) {
+              console.log(`⚠️ ${status}/${day} - Offset ${offset}, capturados: ${dayProcessed}`);
+              hasMore = false;
+            } else {
+              throw error;
+            }
+          }
+        }
+        
+        if (dayProcessed > 0) {
+          console.log(`📊 ${status}/${day}: ${dayProcessed} productos`);
+        }
+      } catch (error) {
+        // Continuar si falla un día específico
+      }
+    }
+  }
+
+  // PARTE 2: De 90 días a 2 años atrás POR MES (productos antiguos menos densos)
+  console.log(`📋 Sincronizando productos antiguos (90 días a 2 años) por mes + estado...`);
+  const olderMonths = [];
+  for (let i = 3; i < 24; i++) { // Meses 3-24 (salteando los primeros 3 meses ya cubiertos por días)
+    const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+    const endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i + 1, 0);
+    olderMonths.push({
       start: startDate.toISOString().split('T')[0],
       end: endDate.toISOString().split('T')[0]
     });
   }
-
-  for (const week of weeks) {
-    try {
-      let offset = 0;
-      let hasMore = true;
-      let weekProcessed = 0;
-      
-      while (hasMore) {
-        try {
-          const response = await axios.get(
-            `https://api.mercadolibre.com/users/${token.user_id}/items/search?date_created_from=${week.start}&date_created_to=${week.end}&offset=${offset}&limit=50`,
-            { headers: { Authorization: `Bearer ${token.access_token}` } }
-          );
-          
-          const results = response.data.results || [];
-          if (results.length === 0) {
-            hasMore = false;
-          } else {
-            allItems = allItems.concat(results);
-            processed += results.length;
-            weekProcessed += results.length;
-            offset += 50;
-          }
-          
-          await new Promise(resolve => setTimeout(resolve, 300));
-        } catch (error: any) {
-          if (error.response?.status === 400) {
-            console.log(`⚠️ Semana ${week.start} - API rechazó offset ${offset}, capturados: ${weekProcessed}`);
-            hasMore = false;
-          } else {
-            throw error;
+  
+  for (const status of statuses) {
+    for (const month of olderMonths) {
+      try {
+        let offset = 0;
+        let hasMore = true;
+        let monthProcessed = 0;
+        
+        while (hasMore) {
+          try {
+            const response = await axios.get(
+              `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&date_created_from=${month.start}&date_created_to=${month.end}&offset=${offset}&limit=50`,
+              { headers: { Authorization: `Bearer ${token.access_token}` } }
+            );
+            
+            const results = response.data.results || [];
+            if (results.length === 0) {
+              hasMore = false;
+            } else {
+              allItems = allItems.concat(results);
+              processed += results.length;
+              monthProcessed += results.length;
+              offset += 50;
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 200));
+          } catch (error: any) {
+            if (error.response?.status === 400) {
+              console.log(`⚠️ ${status}/${month.start} - Offset ${offset}, capturados: ${monthProcessed}`);
+              hasMore = false;
+            } else {
+              throw error;
+            }
           }
         }
+        
+        if (monthProcessed > 0) {
+          console.log(`📊 ${status}/${month.start}: ${monthProcessed} productos`);
+        }
+      } catch (error) {
+        // Continuar si falla un mes específico
       }
-      
-      if (weekProcessed > 0) {
-        console.log(`📊 Semana ${week.start}: ${weekProcessed} productos`);
-      }
-    } catch (error) {
-      console.error(`❌ Error sincronizando semana ${week.start}:`, error);
-      errors++;
     }
   }
 
+  console.log(`📊 Total capturado con estado+fecha: ${processed} productos`);
   return { items: allItems, processed, errors };
 }
 
