@@ -1684,7 +1684,7 @@ async function robustSyncProductos() {
   // Estrategia 1: Paginación estándar con límite 50
   console.log("📋 Estrategia 1: Paginación estándar (límite 50)");
   try {
-    const strategy1 = await paginateWithLimitRobust(token, 50, 200);
+    const strategy1 = await paginateWithLimitRobust(token, 50, 500);
     allItems = [...new Set([...allItems, ...strategy1.items])];
     totalProcessed += strategy1.processed;
     totalErrors += strategy1.errors;
@@ -1701,7 +1701,7 @@ async function robustSyncProductos() {
   // Estrategia 2: Paginación con límite 25 (más páginas)
   console.log("📋 Estrategia 2: Paginación con límite 25");
   try {
-    const strategy2 = await paginateWithLimitRobust(token, 25, 300);
+    const strategy2 = await paginateWithLimitRobust(token, 25, 1000);
     allItems = [...new Set([...allItems, ...strategy2.items])];
     totalProcessed += strategy2.processed;
     totalErrors += strategy2.errors;
@@ -1749,73 +1749,8 @@ async function robustSyncProductos() {
     console.error("❌ Error en estrategia 4:", error);
   }
 
-  // Estrategia 5: Paginación granular con límite 10 (para capturar productos intermedios)
-  console.log("📋 Estrategia 5: Paginación granular (límite 10)");
-  try {
-    const strategy5 = await paginateWithLimitRobust(token, 10, 500);
-    allItems = [...new Set([...allItems, ...strategy5.items])];
-    totalProcessed += strategy5.processed;
-    totalErrors += strategy5.errors;
-    strategies.push({ 
-      name: "Paginación Granular", 
-      items: strategy5.items.length, 
-      processed: strategy5.processed, 
-      errors: strategy5.errors 
-    });
-  } catch (error) {
-    console.error("❌ Error en estrategia 5:", error);
-  }
-
-  // Estrategia 6: Paginación con límite 100 (máximo permitido)
-  console.log("📋 Estrategia 6: Paginación con límite 100");
-  try {
-    const strategy6 = await paginateWithLimitRobust(token, 100, 100);
-    allItems = [...new Set([...allItems, ...strategy6.items])];
-    totalProcessed += strategy6.processed;
-    totalErrors += strategy6.errors;
-    strategies.push({ 
-      name: "Paginación 100", 
-      items: strategy6.items.length, 
-      processed: strategy6.processed, 
-      errors: strategy6.errors 
-    });
-  } catch (error) {
-    console.error("❌ Error en estrategia 6:", error);
-  }
-
-  // Estrategia 7: Sincronización por categorías
-  console.log("📋 Estrategia 7: Sincronización por categorías");
-  try {
-    const strategy7 = await syncByCategoriesRobust(token);
-    allItems = [...new Set([...allItems, ...strategy7.items])];
-    totalProcessed += strategy7.processed;
-    totalErrors += strategy7.errors;
-    strategies.push({ 
-      name: "Por Categorías", 
-      items: strategy7.items.length, 
-      processed: strategy7.processed, 
-      errors: strategy7.errors 
-    });
-  } catch (error) {
-    console.error("❌ Error en estrategia 7:", error);
-  }
-
-  // Estrategia 8: Sincronización con diferentes ordenamientos
-  console.log("📋 Estrategia 8: Sincronización por ordenamiento");
-  try {
-    const strategy8 = await syncByOrderingRobust(token);
-    allItems = [...new Set([...allItems, ...strategy8.items])];
-    totalProcessed += strategy8.processed;
-    totalErrors += strategy8.errors;
-    strategies.push({ 
-      name: "Por Ordenamiento", 
-      items: strategy8.items.length, 
-      processed: strategy8.processed, 
-      errors: strategy8.errors 
-    });
-  } catch (error) {
-    console.error("❌ Error en estrategia 8:", error);
-  }
+  // ESTRATEGIAS 5-8 DESHABILITADAS TEMPORALMENTE
+  // (estaban causando problemas, volviendo a las 4 originales que funcionaban)
 
   console.log(`🎉 DETECCIÓN ROBUSTA COMPLETADA:`);
   console.log(`📊 Total de productos únicos encontrados: ${allItems.length}`);
@@ -2017,7 +1952,7 @@ async function robustSyncProductos() {
   };
 }
 
-// Función auxiliar robusta para paginación con límite de offset seguro
+// Función auxiliar robusta para paginación (SIN límite artificial, deja que la API decida)
 async function paginateWithLimitRobust(token: any, limit: number, maxPages: number) {
   let allItems: string[] = [];
   let offset = 0;
@@ -2026,10 +1961,9 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
   let processed = 0;
   let errors = 0;
   let consecutiveErrors = 0;
-  const maxConsecutiveErrors = 3;
-  const MAX_SAFE_OFFSET = 1000; // Offset máximo seguro para la API de ML
+  const maxConsecutiveErrors = 5;
 
-  while (hasMore && totalPages < maxPages && offset < MAX_SAFE_OFFSET) {
+  while (hasMore && totalPages < maxPages) {
     totalPages++;
     console.log(`📄 Límite ${limit} - Página ${totalPages}/${maxPages} (offset: ${offset})`);
     
@@ -2044,7 +1978,7 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
       
       if (pageResults.length === 0) {
         hasMore = false;
-        console.log(`✅ Límite ${limit} - No hay más productos. Páginas procesadas: ${totalPages - 1}`);
+        console.log(`✅ Límite ${limit} - No hay más productos. Total: ${allItems.length}`);
       } else {
         allItems = allItems.concat(pageResults);
         offset += limit;
@@ -2062,7 +1996,7 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
       
       if (error.response?.status === 400) {
         hasMore = false;
-        console.log(`⚠️ Límite ${limit} - Error 400 (offset demasiado alto), deteniendo en offset ${offset}`);
+        console.log(`⚠️ Límite ${limit} - API rechazó offset ${offset}, capturados: ${allItems.length}`);
       } else if (consecutiveErrors >= maxConsecutiveErrors) {
         hasMore = false;
         console.log(`⚠️ Límite ${limit} - Demasiados errores consecutivos, deteniendo`);
@@ -2074,31 +2008,24 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
     }
   }
 
-  if (offset >= MAX_SAFE_OFFSET) {
-    console.log(`⚠️ Límite ${limit} - Alcanzado offset máximo seguro (${MAX_SAFE_OFFSET})`);
-  }
-
   return { items: allItems, processed, errors };
 }
 
-// Función robusta para sincronización por estados con límite de offset seguro
+// Función robusta para sincronización por estados (SIN límite artificial)
 async function syncByStatusRobust(token: any) {
   const statuses = ['active', 'paused', 'closed', 'under_review'];
   let allItems: string[] = [];
   let processed = 0;
   let errors = 0;
-  const MAX_SAFE_OFFSET = 1000;
 
   for (const status of statuses) {
     console.log(`📋 Sincronizando productos con estado: ${status}`);
     try {
       let offset = 0;
       let hasMore = true;
-      let pageCount = 0;
       let statusProcessed = 0;
       
-      while (hasMore && offset < MAX_SAFE_OFFSET) {
-        pageCount++;
+      while (hasMore) {
         try {
           const response = await axios.get(
             `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&offset=${offset}&limit=50`,
@@ -2118,7 +2045,7 @@ async function syncByStatusRobust(token: any) {
           await new Promise(resolve => setTimeout(resolve, 300));
         } catch (error: any) {
           if (error.response?.status === 400) {
-            console.log(`⚠️ Estado ${status} - Alcanzado límite de offset en ${offset}`);
+            console.log(`⚠️ Estado ${status} - API rechazó offset ${offset}, capturados: ${statusProcessed}`);
             hasMore = false;
           } else {
             throw error;
@@ -2126,7 +2053,7 @@ async function syncByStatusRobust(token: any) {
         }
       }
       
-      console.log(`📊 Estado ${status}: ${statusProcessed} productos encontrados`);
+      console.log(`📊 Estado ${status}: ${statusProcessed} productos`);
     } catch (error) {
       console.error(`❌ Error sincronizando estado ${status}:`, error);
       errors++;
@@ -2136,41 +2063,35 @@ async function syncByStatusRobust(token: any) {
   return { items: allItems, processed, errors };
 }
 
-// Función robusta para sincronización por fechas (por semanas para mayor granularidad)
+// Función robusta para sincronización por fechas (SIN límite artificial)
 async function syncByDateRobust(token: any) {
   let allItems: string[] = [];
   let processed = 0;
   let errors = 0;
-  const MAX_SAFE_OFFSET = 1000;
 
-  // Obtener productos de los últimos 2 años por SEMANAS (más granular que meses)
+  // Obtener productos de los últimos 3 años por meses
   const currentDate = new Date();
-  const weeks = [];
+  const months = [];
   
-  // Generar rangos semanales para los últimos 104 semanas (2 años)
-  for (let i = 0; i < 104; i++) {
-    const endDate = new Date(currentDate);
-    endDate.setDate(endDate.getDate() - (i * 7));
-    const startDate = new Date(endDate);
-    startDate.setDate(startDate.getDate() - 6);
-    
-    weeks.push({
+  for (let i = 0; i < 36; i++) {
+    const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+    const endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i + 1, 0);
+    months.push({
       start: startDate.toISOString().split('T')[0],
       end: endDate.toISOString().split('T')[0]
     });
   }
 
-  for (const week of weeks) {
-    console.log(`📋 Sincronizando productos del ${week.start} al ${week.end}`);
+  for (const month of months) {
     try {
       let offset = 0;
       let hasMore = true;
-      let weekProcessed = 0;
+      let monthProcessed = 0;
       
-      while (hasMore && offset < MAX_SAFE_OFFSET) {
+      while (hasMore) {
         try {
           const response = await axios.get(
-            `https://api.mercadolibre.com/users/${token.user_id}/items/search?date_created_from=${week.start}&date_created_to=${week.end}&offset=${offset}&limit=50`,
+            `https://api.mercadolibre.com/users/${token.user_id}/items/search?date_created_from=${month.start}&date_created_to=${month.end}&offset=${offset}&limit=50`,
             { headers: { Authorization: `Bearer ${token.access_token}` } }
           );
           
@@ -2180,14 +2101,14 @@ async function syncByDateRobust(token: any) {
           } else {
             allItems = allItems.concat(results);
             processed += results.length;
-            weekProcessed += results.length;
+            monthProcessed += results.length;
             offset += 50;
           }
           
           await new Promise(resolve => setTimeout(resolve, 300));
         } catch (error: any) {
           if (error.response?.status === 400) {
-            console.log(`⚠️ Semana ${week.start} - Alcanzado límite de offset en ${offset}`);
+            console.log(`⚠️ Mes ${month.start} - API rechazó offset ${offset}, capturados: ${monthProcessed}`);
             hasMore = false;
           } else {
             throw error;
@@ -2195,11 +2116,11 @@ async function syncByDateRobust(token: any) {
         }
       }
       
-      if (weekProcessed > 0) {
-        console.log(`📊 Semana ${week.start}: ${weekProcessed} productos encontrados`);
+      if (monthProcessed > 0) {
+        console.log(`📊 Mes ${month.start}: ${monthProcessed} productos`);
       }
     } catch (error) {
-      console.error(`❌ Error sincronizando semana ${week.start}:`, error);
+      console.error(`❌ Error sincronizando mes ${month.start}:`, error);
       errors++;
     }
   }
@@ -2207,12 +2128,11 @@ async function syncByDateRobust(token: any) {
   return { items: allItems, processed, errors };
 }
 
-// Función robusta para sincronización por categorías con límite de offset seguro
+// Función robusta para sincronización por categorías (SIN límite artificial)
 async function syncByCategoriesRobust(token: any) {
   let allItems: string[] = [];
   let processed = 0;
   let errors = 0;
-  const MAX_SAFE_OFFSET = 1000;
 
   console.log("📋 Obteniendo categorías únicas de productos...");
   
@@ -2244,7 +2164,7 @@ async function syncByCategoriesRobust(token: any) {
     
     console.log(`📊 Categorías encontradas: ${categories.size}`);
     
-    // Sincronizar por cada categoría
+    // Sincronizar por cada categoría (SIN límite de offset)
     for (const categoryId of Array.from(categories)) {
       console.log(`📋 Sincronizando categoría: ${categoryId}`);
       try {
@@ -2252,7 +2172,7 @@ async function syncByCategoriesRobust(token: any) {
         let hasMore = true;
         let categoryProcessed = 0;
         
-        while (hasMore && offset < MAX_SAFE_OFFSET) {
+        while (hasMore) {
           try {
             const response = await axios.get(
               `https://api.mercadolibre.com/users/${token.user_id}/items/search?category=${categoryId}&offset=${offset}&limit=50`,
@@ -2272,7 +2192,7 @@ async function syncByCategoriesRobust(token: any) {
             await new Promise(resolve => setTimeout(resolve, 300));
           } catch (error: any) {
             if (error.response?.status === 400) {
-              console.log(`⚠️ Categoría ${categoryId} - Alcanzado límite de offset en ${offset}`);
+              console.log(`⚠️ Categoría ${categoryId} - API rechazó offset ${offset}, capturados: ${categoryProcessed}`);
               hasMore = false;
             } else {
               throw error;
@@ -2280,7 +2200,9 @@ async function syncByCategoriesRobust(token: any) {
           }
         }
         
-        console.log(`📊 Categoría ${categoryId}: ${categoryProcessed} productos encontrados`);
+        if (categoryProcessed > 0) {
+          console.log(`📊 Categoría ${categoryId}: ${categoryProcessed} productos`);
+        }
       } catch (error) {
         console.error(`❌ Error sincronizando categoría ${categoryId}:`, error);
         errors++;
@@ -2294,12 +2216,11 @@ async function syncByCategoriesRobust(token: any) {
   return { items: allItems, processed, errors };
 }
 
-// Función robusta para sincronización con diferentes ordenamientos y límite de offset seguro
+// Función robusta para sincronización con diferentes ordenamientos (SIN límite artificial)
 async function syncByOrderingRobust(token: any) {
   let allItems: string[] = [];
   let processed = 0;
   let errors = 0;
-  const MAX_SAFE_OFFSET = 1000;
 
   // Diferentes tipos de ordenamiento que pueden devolver resultados en distintos órdenes
   const sortOptions = ['price_asc', 'price_desc'];
@@ -2311,7 +2232,7 @@ async function syncByOrderingRobust(token: any) {
       let hasMore = true;
       let sortProcessed = 0;
       
-      while (hasMore && offset < MAX_SAFE_OFFSET) {
+      while (hasMore) {
         try {
           const response = await axios.get(
             `https://api.mercadolibre.com/users/${token.user_id}/items/search?sort=${sort}&offset=${offset}&limit=50`,
@@ -2331,7 +2252,7 @@ async function syncByOrderingRobust(token: any) {
           await new Promise(resolve => setTimeout(resolve, 300));
         } catch (error: any) {
           if (error.response?.status === 400) {
-            console.log(`⚠️ Orden ${sort} - Alcanzado límite de offset en ${offset}`);
+            console.log(`⚠️ Orden ${sort} - API rechazó offset ${offset}, capturados: ${sortProcessed}`);
             hasMore = false;
           } else {
             throw error;
@@ -2339,7 +2260,7 @@ async function syncByOrderingRobust(token: any) {
         }
       }
       
-      console.log(`📊 Orden ${sort}: ${sortProcessed} productos encontrados`);
+      console.log(`📊 Orden ${sort}: ${sortProcessed} productos`);
     } catch (error) {
       console.error(`❌ Error sincronizando con orden ${sort}:`, error);
       errors++;
