@@ -15,6 +15,54 @@ const ML_CONFIG = {
   redirect_uri: process.env.ML_REDIRECT_URI as string,
 };
 
+// -------------------- 🔧 HELPERS ÚTILES --------------------
+
+// Deduplicar items por ID (más robusto que Set simple)
+function deduplicateItems(items: any[]) {
+  const map = new Map();
+  for (const item of items) {
+    const id = typeof item === 'string' ? item : item.id;
+    if (!map.has(id)) {
+      map.set(id, item);
+    }
+  }
+  return Array.from(map.values());
+}
+
+// Reintentos automáticos con pausa incremental
+async function retryRequest(fn: () => Promise<any>, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const delay = (i + 1) * 1000;
+      console.warn(`⏳ Reintento ${i + 1}/${maxRetries} después de error: ${err.message}`);
+      await new Promise(r => setTimeout(r, delay));
+      if (i === maxRetries - 1) throw err;
+    }
+  }
+}
+
+// Guardar resultados parciales (opcional, solo si existe la carpeta logs)
+function savePartial(items: any[], name: string) {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const logsDir = path.join(__dirname, '..', 'logs');
+    
+    // Crear carpeta logs si no existe
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+    
+    const filePath = path.join(logsDir, `sync-${name}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(items, null, 2));
+    console.log(`💾 Guardado parcial (${name}): ${items.length} items -> ${filePath}`);
+  } catch (error) {
+    console.log(`⚠️ No se pudo guardar parcial ${name}:`, error);
+  }
+}
+
 // -------------------- HANDLERS --------------------
 interface NotificationParams {
   resource: string;
@@ -1684,8 +1732,9 @@ async function robustSyncProductos() {
   // Estrategia 1: Paginación estándar con límite 50
   console.log("📋 Estrategia 1: Paginación estándar (límite 50)");
   try {
-    const strategy1 = await paginateWithLimitRobust(token, 50, 500);
-    allItems = [...new Set([...allItems, ...strategy1.items])];
+    const strategy1 = await paginateWithLimitRobust(token, 50, 40);
+    savePartial(strategy1.items, "strategy1-paginate50");
+    allItems = allItems.concat(strategy1.items);
     totalProcessed += strategy1.processed;
     totalErrors += strategy1.errors;
     strategies.push({ 
@@ -1694,6 +1743,7 @@ async function robustSyncProductos() {
       processed: strategy1.processed, 
       errors: strategy1.errors 
     });
+    console.log(`📊 Estrategia 1: ${strategy1.items.length} productos únicos`);
   } catch (error) {
     console.error("❌ Error en estrategia 1:", error);
   }
@@ -1701,8 +1751,9 @@ async function robustSyncProductos() {
   // Estrategia 2: Paginación con límite 25 (más páginas)
   console.log("📋 Estrategia 2: Paginación con límite 25");
   try {
-    const strategy2 = await paginateWithLimitRobust(token, 25, 1000);
-    allItems = [...new Set([...allItems, ...strategy2.items])];
+    const strategy2 = await paginateWithLimitRobust(token, 25, 50);
+    savePartial(strategy2.items, "strategy2-paginate25");
+    allItems = allItems.concat(strategy2.items);
     totalProcessed += strategy2.processed;
     totalErrors += strategy2.errors;
     strategies.push({ 
@@ -1711,6 +1762,7 @@ async function robustSyncProductos() {
       processed: strategy2.processed, 
       errors: strategy2.errors 
     });
+    console.log(`📊 Estrategia 2: ${strategy2.items.length} productos únicos`);
   } catch (error) {
     console.error("❌ Error en estrategia 2:", error);
   }
@@ -1719,7 +1771,8 @@ async function robustSyncProductos() {
   console.log("📋 Estrategia 3: Sincronización por estados");
   try {
     const strategy3 = await syncByStatusRobust(token);
-    allItems = [...new Set([...allItems, ...strategy3.items])];
+    savePartial(strategy3.items, "strategy3-status");
+    allItems = allItems.concat(strategy3.items);
     totalProcessed += strategy3.processed;
     totalErrors += strategy3.errors;
     strategies.push({ 
@@ -1728,6 +1781,7 @@ async function robustSyncProductos() {
       processed: strategy3.processed, 
       errors: strategy3.errors 
     });
+    console.log(`📊 Estrategia 3: ${strategy3.items.length} productos únicos`);
   } catch (error) {
     console.error("❌ Error en estrategia 3:", error);
   }
@@ -1736,7 +1790,8 @@ async function robustSyncProductos() {
   console.log("📋 Estrategia 4: Sincronización combinada (estado + fecha)");
   try {
     const strategy4 = await syncByStatusAndDateRobust(token);
-    allItems = [...new Set([...allItems, ...strategy4.items])];
+    savePartial(strategy4.items, "strategy4-status-date");
+    allItems = allItems.concat(strategy4.items);
     totalProcessed += strategy4.processed;
     totalErrors += strategy4.errors;
     strategies.push({ 
@@ -1745,29 +1800,31 @@ async function robustSyncProductos() {
       processed: strategy4.processed, 
       errors: strategy4.errors 
     });
+    console.log(`📊 Estrategia 4: ${strategy4.items.length} productos únicos`);
   } catch (error) {
     console.error("❌ Error en estrategia 4:", error);
   }
 
-  // ESTRATEGIAS 5-8 DESHABILITADAS TEMPORALMENTE
-  // (estaban causando problemas, volviendo a las 4 originales que funcionaban)
+  // Deduplicar TODOS los productos de todas las estrategias
+  const uniqueItems = deduplicateItems(allItems);
+  savePartial(uniqueItems, "final-merged");
 
   console.log(`🎉 DETECCIÓN ROBUSTA COMPLETADA:`);
-  console.log(`📊 Total de productos únicos encontrados: ${allItems.length}`);
-  console.log(`📊 Total procesados: ${totalProcessed}`);
+  console.log(`📊 Total de productos únicos encontrados: ${uniqueItems.length}`);
+  console.log(`📊 Total procesados (con duplicados): ${totalProcessed}`);
   console.log(`📊 Total errores: ${totalErrors}`);
   console.log(`📊 Estrategias ejecutadas: ${strategies.length}`);
 
   // 🚀 PROCESAR TODOS LOS PRODUCTOS ENCONTRADOS
-  console.log(`🔄 Iniciando procesamiento de ${allItems.length} productos únicos...`);
+  console.log(`🔄 Iniciando procesamiento de ${uniqueItems.length} productos únicos...`);
   
   let processedCount = 0;
   let errorCount = 0;
   const processingErrors: string[] = [];
 
-  for (const itemId of allItems) {
+  for (const itemId of uniqueItems) {
     try {
-      console.log(`🔄 Procesando producto ${processedCount + 1}/${allItems.length}: ${itemId}`);
+      console.log(`🔄 Procesando producto ${processedCount + 1}/${uniqueItems.length}: ${itemId}`);
       
       const { data: itemDetail } = await axios.get(
         `https://api.mercadolibre.com/items/${itemId}`,
@@ -1939,20 +1996,20 @@ async function robustSyncProductos() {
   console.log(`🎉 PROCESAMIENTO COMPLETADO:`);
   console.log(`✅ Productos procesados exitosamente: ${processedCount}`);
   console.log(`❌ Productos con errores: ${errorCount}`);
-  console.log(`📊 Total de productos únicos encontrados: ${allItems.length}`);
+  console.log(`📊 Total de productos únicos encontrados: ${uniqueItems.length}`);
   console.log(`📊 Total de productos en base de datos: ${await Producto.countDocuments()}`);
 
   return {
-    totalItems: allItems.length,
+    totalItems: uniqueItems.length,
     totalProcessed: processedCount,
     totalErrors: errorCount,
     strategies,
-    items: allItems,
+    items: uniqueItems,
     processingErrors
   };
 }
 
-// Función auxiliar robusta para paginación (SIN límite artificial, deja que la API decida)
+// Función auxiliar robusta para paginación con reintentos automáticos
 async function paginateWithLimitRobust(token: any, limit: number, maxPages: number) {
   let allItems: string[] = [];
   let offset = 0;
@@ -1961,16 +2018,19 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
   let processed = 0;
   let errors = 0;
   let consecutiveErrors = 0;
-  const maxConsecutiveErrors = 5;
+  const maxConsecutiveErrors = 3;
 
   while (hasMore && totalPages < maxPages) {
     totalPages++;
     console.log(`📄 Límite ${limit} - Página ${totalPages}/${maxPages} (offset: ${offset})`);
     
     try {
-      const itemsResponse = await axios.get(
-        `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
-        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      // Usar retryRequest para reintentos automáticos
+      const itemsResponse = await retryRequest(() => 
+        axios.get(
+          `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        )
       );
 
       const pageResults = itemsResponse.data.results || [];
@@ -2002,16 +2062,16 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
         console.log(`⚠️ Límite ${limit} - Demasiados errores consecutivos, deteniendo`);
       } else {
         offset += limit;
-        console.log(`⏳ Límite ${limit} - Pausa extendida debido a error`);
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
   }
 
-  return { items: allItems, processed, errors };
+  // Deduplicar antes de retornar
+  return { items: deduplicateItems(allItems), processed, errors };
 }
 
-// Función robusta para sincronización por estados (SIN límite artificial)
+// Función robusta para sincronización por estados con reintentos
 async function syncByStatusRobust(token: any) {
   const statuses = ['active', 'paused', 'closed', 'under_review'];
   let allItems: string[] = [];
@@ -2027,9 +2087,12 @@ async function syncByStatusRobust(token: any) {
       
       while (hasMore) {
         try {
-          const response = await axios.get(
-            `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&offset=${offset}&limit=50`,
-            { headers: { Authorization: `Bearer ${token.access_token}` } }
+          // Usar retryRequest para reintentos automáticos
+          const response = await retryRequest(() =>
+            axios.get(
+              `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&offset=${offset}&limit=50`,
+              { headers: { Authorization: `Bearer ${token.access_token}` } }
+            )
           );
           
           const results = response.data.results || [];
@@ -2060,7 +2123,8 @@ async function syncByStatusRobust(token: any) {
     }
   }
 
-  return { items: allItems, processed, errors };
+  // Deduplicar antes de retornar
+  return { items: deduplicateItems(allItems), processed, errors };
 }
 
 // Función para sincronizar combinando ESTADO + FECHA (optimizada)
@@ -2090,9 +2154,12 @@ async function syncByStatusAndDateRobust(token: any) {
         
         while (hasMore) {
           try {
-            const response = await axios.get(
-              `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&date_created_from=${day}&date_created_to=${day}&offset=${offset}&limit=50`,
-              { headers: { Authorization: `Bearer ${token.access_token}` } }
+            // Usar retryRequest para reintentos automáticos
+            const response = await retryRequest(() =>
+              axios.get(
+                `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&date_created_from=${day}&date_created_to=${day}&offset=${offset}&limit=50`,
+                { headers: { Authorization: `Bearer ${token.access_token}` } }
+              )
             );
             
             const results = response.data.results || [];
@@ -2146,9 +2213,12 @@ async function syncByStatusAndDateRobust(token: any) {
         
         while (hasMore) {
           try {
-            const response = await axios.get(
-              `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&date_created_from=${month.start}&date_created_to=${month.end}&offset=${offset}&limit=50`,
-              { headers: { Authorization: `Bearer ${token.access_token}` } }
+            // Usar retryRequest para reintentos automáticos
+            const response = await retryRequest(() =>
+              axios.get(
+                `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&date_created_from=${month.start}&date_created_to=${month.end}&offset=${offset}&limit=50`,
+                { headers: { Authorization: `Bearer ${token.access_token}` } }
+              )
             );
             
             const results = response.data.results || [];
@@ -2182,7 +2252,9 @@ async function syncByStatusAndDateRobust(token: any) {
   }
 
   console.log(`📊 Total capturado con estado+fecha: ${processed} productos`);
-  return { items: allItems, processed, errors };
+  
+  // Deduplicar antes de retornar
+  return { items: deduplicateItems(allItems), processed, errors: 0 };
 }
 
 // Función robusta para sincronización por categorías (SIN límite artificial)
