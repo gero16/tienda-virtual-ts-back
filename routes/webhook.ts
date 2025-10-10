@@ -22,7 +22,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
 
     console.log(colors.blue("\n🔔 Webhook de MercadoPago recibido"));
     console.log(colors.blue(`   Type: ${type}`));
-    console.log(colors.blue(`   Data:`, JSON.stringify(data, null, 2)));
+    console.log(colors.blue(`   Data: ${JSON.stringify(data, null, 2)}`));
 
     // Solo procesar notificaciones de pagos
     if (type !== "payment") {
@@ -133,7 +133,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
                 
                 console.log(colors.green(`      ✅ MercadoLibre - ${item.title}: Stock actualizado a ${nuevoStockML}`));
               } catch (mlError: any) {
-                console.log(colors.red(`      ❌ Error actualizando en ML para ${item.title}:`, mlError.message));
+                console.log(colors.red(`      ❌ Error actualizando en ML para ${item.title}: ${mlError.message}`));
                 // No hacer rollback de la transacción, el stock en BD ya se actualizó correctamente
               }
             }
