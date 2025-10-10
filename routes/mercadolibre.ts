@@ -3147,6 +3147,114 @@ export async function updateStockInMercadoLibre(itemId: string, newStock: number
 // =====================
 export { getCurrentToken };
 
+// 🔍 Endpoint para diagnosticar limitaciones y obtener información real de ML
+router.get("/diagnostico/productos", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    console.log("🔍 Ejecutando diagnóstico completo de productos ML...");
+
+    // 1. Verificar restricciones del vendedor
+    let restrictions = null;
+    try {
+      const restrictionsResponse = await axios.get(
+        `https://api.mercadolibre.com/users/${token.user_id}/items/search/restrictions`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+      restrictions = restrictionsResponse.data;
+      console.log("📊 Restricciones:", restrictions);
+    } catch (error: any) {
+      console.log("⚠️ No se pudieron obtener restricciones:", error.message);
+    }
+
+    // 2. Obtener información de paging (total disponible)
+    const searchResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}/items/search?limit=1`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+
+    const paging = searchResponse.data.paging;
+    console.log("📊 Paging info:", paging);
+
+    // 3. Obtener conteo por estado
+    const statusCounts: any = {};
+    const statuses = ['active', 'paused', 'closed', 'under_review', 'inactive'];
+    
+    for (const status of statuses) {
+      try {
+        const statusResponse = await axios.get(
+          `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&limit=1`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        statusCounts[status] = statusResponse.data.paging?.total || 0;
+      } catch (error) {
+        statusCounts[status] = 'error';
+      }
+    }
+
+    // 4. Obtener información del usuario
+    const userResponse = await axios.get(
+      `https://api.mercadolibre.com/users/${token.user_id}`,
+      { headers: { Authorization: `Bearer ${token.access_token}` } }
+    );
+    
+    const userInfo = {
+      id: userResponse.data.id,
+      nickname: userResponse.data.nickname,
+      seller_reputation: userResponse.data.seller_reputation,
+      status: userResponse.data.status
+    };
+
+    // 5. Productos en nuestra DB
+    const dbCount = await Producto.countDocuments();
+    const dbByStatus = await Producto.aggregate([
+      { $group: { _id: "$status", count: { $sum: 1 } } }
+    ]);
+
+    res.json({
+      diagnostico: {
+        user_info: userInfo,
+        restrictions: restrictions,
+        ml_total_reported: paging?.total || "No disponible",
+        ml_limit_per_page: paging?.limit || 50,
+        ml_offset: paging?.offset || 0,
+        status_counts: statusCounts,
+        total_by_status: Object.values(statusCounts).reduce((a: any, b: any) => 
+          typeof b === 'number' ? a + b : a, 0
+        ),
+        db_count: dbCount,
+        db_by_status: dbByStatus,
+        gap: paging?.total ? paging.total - dbCount : 'Desconocido',
+        recommendation: generateRecommendation(paging?.total, dbCount, statusCounts)
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (err: any) {
+    console.error("❌ Error en diagnóstico:", err);
+    res.status(500).json({ 
+      error: "Error ejecutando diagnóstico: " + err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Helper para generar recomendación basada en diagnóstico
+function generateRecommendation(mlTotal: number, dbCount: number, statusCounts: any): string {
+  if (!mlTotal) return "No se pudo obtener el total de ML. Verifica la autenticación.";
+  
+  const gap = mlTotal - dbCount;
+  const activeInML = statusCounts.active || 0;
+  
+  if (gap === 0) return "✅ Base de datos sincronizada completamente";
+  if (gap < 0) return "⚠️ Tienes MÁS productos en DB que en ML. Considera limpiar productos eliminados.";
+  if (gap > 0 && gap < 100) return `⚠️ Faltan ${gap} productos. Ejecuta /ml/sync/force-robust`;
+  if (activeInML > 1500) return `⚠️ Tienes ${activeInML} productos activos. La API de ML limita offset a ~1050, por lo que es IMPOSIBLE capturar todos con las herramientas estándar. Considera contactar a ML para soluciones empresariales.`;
+  
+  return `⚠️ Faltan ${gap} productos. Ejecuta /ml/sync/force-robust para sincronizar.`;
+}
+
 // Endpoint temporal para debuggear campos de ML
 router.get("/debug/producto/:ml_id", async (req: Request, res: Response) => {
   try {
