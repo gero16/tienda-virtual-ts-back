@@ -832,9 +832,9 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       payment_method_id: payment_method_id,
       currency_id: "USD", // 💵 Dólares estadounidenses
       payer: {
-        email: payer?.email || "test@example.com",
+        email: payer?.email || customer?.email || "test@example.com",
         identification: payer?.identification || {
-          type: "DNI",
+          type: "CI",  // Uruguay usa CI (Cédula de Identidad)
           number: "12345678"
         }
       }
