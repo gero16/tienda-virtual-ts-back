@@ -3234,6 +3234,71 @@ export async function updateStockInMercadoLibre(itemId: string, newStock: number
 // =====================
 export { getCurrentToken };
 
+// 🔬 Endpoint para obtener TODOS los IDs sin límite de offset (usando scroll/search_after si existe)
+router.get("/debug/all-ids", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    console.log("🔍 Intentando capturar TODOS los IDs de productos...");
+    
+    const allIds = new Set<string>();
+    
+    // Probar diferentes enfoques para obtener IDs
+    const approaches = [
+      { name: "Paginación simple", filter: "" },
+      { name: "Active", filter: "status=active" },
+      { name: "Paused", filter: "status=paused" },
+      { name: "Closed", filter: "status=closed" },
+      { name: "Inactive", filter: "status=inactive" },
+    ];
+    
+    for (const approach of approaches) {
+      let offset = 0;
+      let hasMore = true;
+      let count = 0;
+      
+      console.log(`\n📋 Probando: ${approach.name}`);
+      
+      while (hasMore && offset < 2000) {
+        try {
+          const url = `https://api.mercadolibre.com/users/${token.user_id}/items/search?${approach.filter}${approach.filter ? '&' : ''}offset=${offset}&limit=50`;
+          const response = await axios.get(url, {
+            headers: { Authorization: `Bearer ${token.access_token}` }
+          });
+          
+          const results = response.data.results || [];
+          
+          if (results.length === 0) {
+            hasMore = false;
+          } else {
+            results.forEach((id: string) => allIds.add(id));
+            count += results.length;
+            offset += 50;
+          }
+          
+          await new Promise(r => setTimeout(r, 100));
+        } catch (error: any) {
+          console.log(`   ❌ Error en offset ${offset}: ${error.message}`);
+          hasMore = false;
+        }
+      }
+      
+      console.log(`   📊 ${approach.name}: ${count} productos, únicos totales: ${allIds.size}`);
+    }
+    
+    res.json({
+      total_unique_ids: allIds.size,
+      ids: Array.from(allIds),
+      message: `Se capturaron ${allIds.size} IDs únicos usando múltiples enfoques`,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 🔍 Endpoint para diagnosticar limitaciones y obtener información real de ML
 router.get("/diagnostico/productos", async (req: Request, res: Response) => {
   try {
