@@ -5,6 +5,7 @@ import mongoose from "mongoose";
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden";
 import CuponModel from "../models/Cupon";
+import { getCurrentToken, updateStockInMercadoLibre } from "./mercadolibre";
 
 const router = Router();
 
@@ -45,6 +46,19 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     console.log(colors.cyan(`   💳 Estado del pago: ${paymentData.status}`));
     console.log(colors.cyan(`   💵 Monto: $${paymentData.transaction_amount} ${paymentData.currency_id}`));
     console.log(colors.cyan(`   🆔 External Reference: ${paymentData.external_reference}`));
+    console.log(colors.cyan(`   🧪 Live Mode: ${paymentData.live_mode}`));
+
+    // 🧪 IMPORTANTE: Detectar si es un pago de PRUEBA
+    const esPagoDePrueba = paymentData.live_mode === false;
+    
+    if (esPagoDePrueba) {
+      console.log(colors.yellow("   🧪 PAGO DE PRUEBA DETECTADO"));
+      console.log(colors.yellow("   ⚠️  NO se actualizará el stock (es solo una prueba)"));
+      console.log(colors.yellow("   ✅ Pago de prueba registrado, pero stock se mantiene igual"));
+      return; // Salir sin actualizar stock
+    }
+
+    console.log(colors.green("   ✅ Pago de PRODUCCIÓN detectado, se procesará normalmente"));
 
     // Solo procesar pagos aprobados
     if (paymentData.status !== "approved") {
@@ -76,8 +90,8 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         return;
       }
 
-      // Actualizar stock de los productos
-      console.log(colors.yellow("   📦 Actualizando stock..."));
+      // Actualizar stock de los productos EN TU BD
+      console.log(colors.yellow("   📦 Actualizando stock en BD local..."));
       
       for (const item of metadata) {
         const producto = await ProductoModel.findOne({ ml_id: item.id }).session(session);
@@ -91,8 +105,48 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
             { session }
           );
 
-          console.log(colors.green(`      ✅ ${item.title}: ${producto.available_quantity} → ${nuevoStock}`));
+          console.log(colors.green(`      ✅ BD Local - ${item.title}: ${producto.available_quantity} → ${nuevoStock}`));
         }
+      }
+
+      // 🔥 IMPORTANTE: Actualizar stock EN MERCADOLIBRE de tus clientes
+      console.log(colors.yellow("   🛍️  Actualizando stock en MercadoLibre..."));
+      
+      try {
+        const token = await getCurrentToken();
+        
+        if (token) {
+          console.log(colors.blue("      🔑 Token de MercadoLibre obtenido"));
+          
+          for (const item of metadata) {
+            const producto = await ProductoModel.findOne({ ml_id: item.id });
+            
+            if (producto) {
+              const nuevoStockML = Math.max(0, producto.available_quantity);
+              
+              try {
+                await updateStockInMercadoLibre(
+                  producto.ml_id, 
+                  nuevoStockML, 
+                  token.access_token
+                );
+                
+                console.log(colors.green(`      ✅ MercadoLibre - ${item.title}: Stock actualizado a ${nuevoStockML}`));
+              } catch (mlError: any) {
+                console.log(colors.red(`      ❌ Error actualizando en ML para ${item.title}:`, mlError.message));
+                // No hacer rollback de la transacción, el stock en BD ya se actualizó correctamente
+              }
+            }
+          }
+          
+          console.log(colors.green("   ✅ Stock sincronizado con MercadoLibre"));
+        } else {
+          console.log(colors.yellow("      ⚠️  No se pudo obtener token de MercadoLibre"));
+          console.log(colors.yellow("      ⚠️  Stock actualizado en BD, pero NO en MercadoLibre"));
+        }
+      } catch (tokenError) {
+        console.log(colors.red("      ❌ Error obteniendo token de ML:"), tokenError);
+        console.log(colors.yellow("      ⚠️  Stock actualizado en BD, pero NO en MercadoLibre"));
       }
 
       // Registrar uso de cupón si existe
