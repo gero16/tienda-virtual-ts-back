@@ -39,7 +39,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     // Obtener información completa del pago
     console.log(colors.yellow(`   📋 Consultando pago ${paymentId}...`));
     
-    const payment = await mercadopago.payment.findById(parseInt(paymentId));
+    const payment = await mercadopago.payment.findById(paymentId);
     const paymentData = payment.body;
 
     console.log(colors.cyan(`   💳 Estado del pago: ${paymentData.status}`));
