@@ -1786,10 +1786,24 @@ async function robustSyncProductos() {
     console.error("❌ Error en estrategia 3:", error);
   }
 
-  // ESTRATEGIA 4 DESHABILITADA: Productos muy concentrados hacen que cada día
-  // tenga >1050 productos, causando reintentos inútiles y ralentizando todo
-  console.log("⚠️ Estrategia 4 deshabilitada (productos muy concentrados)");
-  console.log("📊 Las 3 estrategias activas capturan ~1343 productos únicos");
+  // Estrategia 4: Dividir productos activos por RANGOS DE PRECIO
+  console.log("📋 Estrategia 4: Sincronización de activos por rangos de precio");
+  try {
+    const strategy4 = await syncActiveByPriceRanges(token);
+    savePartial(strategy4.items, "strategy4-price-ranges");
+    allItems = allItems.concat(strategy4.items);
+    totalProcessed += strategy4.processed;
+    totalErrors += strategy4.errors;
+    strategies.push({ 
+      name: "Activos por Precio", 
+      items: strategy4.items.length, 
+      processed: strategy4.processed, 
+      errors: strategy4.errors 
+    });
+    console.log(`📊 Estrategia 4: ${strategy4.items.length} productos únicos`);
+  } catch (error) {
+    console.error("❌ Error en estrategia 4:", error);
+  }
 
   // Deduplicar TODOS los productos de todas las estrategias
   const uniqueItems = deduplicateItems(allItems);
@@ -2110,6 +2124,79 @@ async function syncByStatusRobust(token: any) {
   }
 
   // Deduplicar antes de retornar
+  return { items: deduplicateItems(allItems), processed, errors };
+}
+
+// Función para sincronizar productos ACTIVOS divididos por RANGOS DE PRECIO
+async function syncActiveByPriceRanges(token: any) {
+  let allItems: string[] = [];
+  let processed = 0;
+  let errors = 0;
+
+  // Dividir en rangos de precio UYU (aunque el vendedor piense en USD, ML almacena en UYU)
+  // Conversión aprox: 1 USD = 40 UYU
+  // Con 1542 activos, dividir en rangos más granulares
+  const priceRanges = [
+    { min: 0, max: 200, name: "0-200" },          // ~0-5 USD
+    { min: 200, max: 400, name: "200-400" },      // ~5-10 USD
+    { min: 400, max: 800, name: "400-800" },      // ~10-20 USD
+    { min: 800, max: 1200, name: "800-1200" },    // ~20-30 USD
+    { min: 1200, max: 1600, name: "1200-1600" },  // ~30-40 USD
+    { min: 1600, max: 2000, name: "1600-2000" },  // ~40-50 USD
+    { min: 2000, max: 3000, name: "2000-3000" },  // ~50-75 USD
+    { min: 3000, max: 4000, name: "3000-4000" },  // ~75-100 USD
+    { min: 4000, max: 6000, name: "4000-6000" },  // ~100-150 USD
+    { min: 6000, max: 10000, name: "6000-10000" },// ~150-250 USD
+    { min: 10000, max: 999999, name: "10000+" }   // >250 USD
+  ];
+
+  for (const range of priceRanges) {
+    console.log(`📋 Sincronizando activos rango ${range.name} UYU`);
+    try {
+      let offset = 0;
+      let hasMore = true;
+      let rangeProcessed = 0;
+      
+      while (hasMore) {
+        try {
+          const response = await retryRequest(() =>
+            axios.get(
+              `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=active&price=${range.min}-${range.max}&offset=${offset}&limit=50`,
+              { headers: { Authorization: `Bearer ${token.access_token}` } }
+            )
+          );
+          
+          const results = response.data.results || [];
+          if (results.length === 0) {
+            hasMore = false;
+          } else {
+            allItems = allItems.concat(results);
+            processed += results.length;
+            rangeProcessed += results.length;
+            offset += 50;
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } catch (error: any) {
+          if (error.response?.status === 400) {
+            console.log(`⚠️ Rango ${range.name} - Offset ${offset}, capturados: ${rangeProcessed}`);
+            hasMore = false;
+          } else {
+            throw error;
+          }
+        }
+      }
+      
+      if (rangeProcessed > 0) {
+        console.log(`📊 Rango ${range.name}: ${rangeProcessed} productos`);
+      }
+    } catch (error) {
+      console.error(`❌ Error sincronizando rango ${range.name}:`, error);
+      errors++;
+    }
+  }
+
+  console.log(`📊 Total capturado por rangos de precio: ${processed} productos`);
   return { items: deduplicateItems(allItems), processed, errors };
 }
 
