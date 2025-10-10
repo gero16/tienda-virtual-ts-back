@@ -1786,16 +1786,16 @@ async function robustSyncProductos() {
     console.error("❌ Error en estrategia 3:", error);
   }
 
-  // Estrategia 4: Dividir productos activos por RANGOS DE PRECIO
-  console.log("📋 Estrategia 4: Sincronización de activos por rangos de precio");
+  // Estrategia 4: API de búsqueda PÚBLICA (sin autenticación, sin límite de offset)
+  console.log("📋 Estrategia 4: Búsqueda pública por seller_id");
   try {
-    const strategy4 = await syncActiveByPriceRanges(token);
-    savePartial(strategy4.items, "strategy4-price-ranges");
+    const strategy4 = await syncViaPublicSearch(token);
+    savePartial(strategy4.items, "strategy4-public-search");
     allItems = allItems.concat(strategy4.items);
     totalProcessed += strategy4.processed;
     totalErrors += strategy4.errors;
     strategies.push({ 
-      name: "Activos por Precio", 
+      name: "Búsqueda Pública", 
       items: strategy4.items.length, 
       processed: strategy4.processed, 
       errors: strategy4.errors 
@@ -2124,6 +2124,64 @@ async function syncByStatusRobust(token: any) {
   }
 
   // Deduplicar antes de retornar
+  return { items: deduplicateItems(allItems), processed, errors };
+}
+
+// Función para sincronizar usando API de búsqueda PÚBLICA (puede tener límites diferentes)
+async function syncViaPublicSearch(token: any) {
+  let allItems: string[] = [];
+  let processed = 0;
+  let errors = 0;
+
+  console.log("🔍 Usando API de búsqueda pública (sin límite de offset?)...");
+  
+  try {
+    let offset = 0;
+    let hasMore = true;
+    const limit = 50;
+    let totalPages = 0;
+    
+    // Usar el endpoint de búsqueda pública por seller_id
+    // Este endpoint NO requiere autenticación y puede tener límites diferentes
+    while (hasMore && totalPages < 100) {
+      totalPages++;
+      
+      try {
+        // NO usar token, es endpoint público
+        const response = await axios.get(
+          `https://api.mercadolibre.com/sites/MLU/search?seller_id=${token.user_id}&offset=${offset}&limit=${limit}`
+        );
+        
+        const results = response.data.results || [];
+        console.log(`📄 Búsqueda pública - Página ${totalPages}, offset ${offset}: ${results.length} productos`);
+        
+        if (results.length === 0) {
+          hasMore = false;
+        } else {
+          // Los resultados son objetos, extraer solo los IDs
+          const ids = results.map((item: any) => item.id);
+          allItems = allItems.concat(ids);
+          processed += results.length;
+          offset += limit;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+      } catch (error: any) {
+        if (error.response?.status === 400) {
+          console.log(`⚠️ Búsqueda pública - Offset ${offset} rechazado`);
+          hasMore = false;
+        } else {
+          throw error;
+        }
+      }
+    }
+    
+    console.log(`📊 Búsqueda pública capturó: ${allItems.length} productos`);
+  } catch (error: any) {
+    console.error(`❌ Error en búsqueda pública:`, error.message);
+    errors++;
+  }
+
   return { items: deduplicateItems(allItems), processed, errors };
 }
 
