@@ -14,6 +14,7 @@ import cupones from './routes/cupones'; // 🆕 Importar rutas de cupones
 import sitemap from './routes/sitemap'; // 🆕 Importar rutas de sitemap/SEO
 import checkoutPro from './routes/checkoutPro'; // 🆕 Checkout Pro para USD
 import webhook from './routes/webhook'; // 🆕 Webhook de MercadoPago
+import verificarUSD from './routes/verificarUSD'; // 🆕 Verificar soporte de USD
 
 const app : Express = express();
 const port = 3000;
@@ -60,6 +61,7 @@ app.use('/api/cupones', cupones); // 🆕 Agregar rutas de cupones
 app.use('/api', sitemap); // 🆕 Agregar rutas de sitemap y robots.txt para SEO
 app.use('/api/checkout-pro', checkoutPro); // 🆕 Checkout Pro para cobrar en USD
 app.use('/webhook', webhook); // 🆕 Webhook para notificaciones de MercadoPago
+app.use('/api/verificar', verificarUSD); // 🆕 Verificar soporte de USD en cuenta de MP
 app.get('/', (req: Request, res: Response) => {
   res.send('Ruta funcionando!');
 });
