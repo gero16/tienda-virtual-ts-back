@@ -6,7 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "tsc && node dist/app.js",
-    "watch": "tsc --watch"
+    "watch": "tsc --watch",
+    "limpiar-duplicados": "tsc && node dist/scripts/limpiarClientesDuplicados.js"
   },
   "keywords": [],
   "author": "",

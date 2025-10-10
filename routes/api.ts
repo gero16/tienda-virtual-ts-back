@@ -840,6 +840,14 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       }
     };
 
+    // Mostrar datos del pago antes de enviarlo
+    console.log(colors.blue("📤 Datos del pago a enviar:"));
+    console.log(colors.blue(`   Monto: ${paymentData.transaction_amount}`));
+    console.log(colors.blue(`   Moneda: ${paymentData.currency_id}`));
+    console.log(colors.blue(`   Token: ${paymentData.token}`));
+    console.log(colors.blue(`   Método de pago: ${paymentData.payment_method_id}`));
+    console.log(colors.blue(`   Email: ${paymentData.payer.email}`));
+    
     // Procesar el pago con MercadoPago
     let response;
     try {
@@ -847,12 +855,27 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     } catch (paymentError: any) {
       // Si el pago falla, hacer rollback del stock
       console.log(colors.red("❌ Error procesando pago, haciendo rollback de stock..."));
+      console.log(colors.red("❌ Error completo de MercadoPago:"));
+      console.log(colors.red(JSON.stringify(paymentError, null, 2)));
+      
+      // Intentar obtener más detalles del error
+      if (paymentError.response) {
+        console.log(colors.red("❌ Response del error:"));
+        console.log(colors.red(JSON.stringify(paymentError.response, null, 2)));
+      }
+      
+      if (paymentError.cause) {
+        console.log(colors.red("❌ Causa del error:"));
+        console.log(colors.red(JSON.stringify(paymentError.cause, null, 2)));
+      }
+      
       await session.abortTransaction();
       session.endSession();
       
       return res.status(500).json({ 
         error: "Error procesando el pago", 
-        details: paymentError.message 
+        details: paymentError.message,
+        mp_error: paymentError.cause || paymentError.response || paymentError
       });
     }
     
