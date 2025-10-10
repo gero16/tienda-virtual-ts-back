@@ -16,9 +16,8 @@ import sitemap from './routes/sitemap'; // 🆕 Importar rutas de sitemap/SEO
 const app : Express = express();
 const port = 3000;
 
-app.use(bodyParser.json())
-
-// Configuración CORS para permitir el frontend de Vercel
+// ⚠️ IMPORTANTE: CORS debe ir ANTES de bodyParser
+// Configuración CORS mejorada para permitir el frontend de Vercel
 const corsOptions = {
   origin: [
     'https://mercado-libre-roan.vercel.app',
@@ -26,11 +25,21 @@ const corsOptions = {
     'http://localhost:5173',
     'http://localhost:3001'
   ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  preflightContinue: false
 };
 
-app.use(cors(corsOptions))
+// Aplicar CORS globalmente PRIMERO
+app.use(cors(corsOptions));
+
+// Manejar preflight requests explícitamente
+app.options('*', cors(corsOptions));
+
+// LUEGO bodyParser
+app.use(bodyParser.json())
 
 import mercadopago from 'mercadopago';
 
