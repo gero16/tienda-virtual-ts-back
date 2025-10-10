@@ -137,7 +137,7 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       totalCalculado += subtotal;
 
       console.log(colors.blue(`   ✅ ${item.name}`));
-      console.log(colors.blue(`      Precio: $${precioReal} UYU x ${item.cantidad} = $${subtotal} UYU`));
+      console.log(colors.blue(`      Precio: $${precioReal} USD x ${item.cantidad} = $${subtotal} USD`));
 
       // Limitar descripción a 256 caracteres (requisito de MercadoPago)
       const description = (producto.description || producto.title).substring(0, 256);
@@ -149,11 +149,11 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
         picture_url: producto.images && producto.images[0] ? producto.images[0].url : undefined,
         quantity: item.cantidad,
         unit_price: precioReal,
-        currency_id: "UYU" as const // Pesos uruguayos (tu cuenta no soporta USD)
+        currency_id: "USD" as const // USD para clientes con cuentas internacionales
       });
     }
 
-    console.log(colors.cyan(`💰 Total calculado: $${totalCalculado} UYU`));
+    console.log(colors.cyan(`💰 Total calculado: $${totalCalculado} USD`));
 
     // ========== PASO 2: VALIDAR CUPÓN ==========
     let descuentoCupon = 0;
@@ -180,12 +180,12 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       cuponValidado = validacionCupon.cupon;
       
       console.log(colors.green(`✅ Cupón validado: ${cupon_codigo}`));
-      console.log(colors.green(`   Descuento: $${descuentoCupon} UYU`));
+      console.log(colors.green(`   Descuento: $${descuentoCupon} USD`));
     }
 
     // ========== PASO 3: CALCULAR TOTAL FINAL ==========
     const totalFinal = totalCalculado - descuentoCupon;
-    console.log(colors.cyan(`💵 Total final: $${totalFinal} UYU`));
+    console.log(colors.cyan(`💵 Total final: $${totalFinal} USD`));
 
     if (totalFinal <= 0) {
       return res.status(400).json({ 
@@ -234,7 +234,7 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
 
     console.log(colors.green("✅ Preferencia creada exitosamente"));
     console.log(colors.green(`   Preference ID: ${response.body.id}`));
-    console.log(colors.green(`   Total: $${totalFinal} UYU`));
+    console.log(colors.green(`   Total: $${totalFinal} USD`));
     
     // 🔍 VERIFICAR QUÉ MONEDA DEVOLVIÓ MERCADOPAGO
     const itemsEnRespuesta = response.body.items || [];
@@ -254,8 +254,8 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       sandbox_init_point: response.body.sandbox_init_point,
       external_reference: external_reference,
       total: totalFinal,
-      currency: "UYU",
-      currency_real: itemsEnRespuesta[0]?.currency_id || "UYU", // Moneda real que devolvió MP
+      currency: "USD",
+      currency_real: itemsEnRespuesta[0]?.currency_id || "USD", // Moneda real que devolvió MP
       items: itemsValidados.map(item => ({
         id: item.id,
         title: item.title,
