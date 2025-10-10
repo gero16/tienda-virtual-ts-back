@@ -824,13 +824,14 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     console.log(colors.green("   ✅ Usando precios validados desde la base de datos"));
     
     // Crear el objeto de pago para MercadoPago
+    // NOTA: Para pagos con token, la moneda se determina automáticamente por tu cuenta de MercadoPago
+    // NO se debe enviar currency_id aquí (solo en preferencias de checkout)
     const paymentData = {
       transaction_amount: Number(transaction_amount),
       token: token,
       description: description || "Pago desde tienda virtual",
       installments: Number(installments) || 1,
       payment_method_id: payment_method_id,
-      currency_id: "USD", // 💵 Dólares estadounidenses
       payer: {
         email: payer?.email || customer?.email || "test@example.com",
         identification: payer?.identification || {
@@ -843,7 +844,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     // Mostrar datos del pago antes de enviarlo
     console.log(colors.blue("📤 Datos del pago a enviar:"));
     console.log(colors.blue(`   Monto: ${paymentData.transaction_amount}`));
-    console.log(colors.blue(`   Moneda: ${paymentData.currency_id}`));
+    console.log(colors.blue(`   Moneda: Determinada por tu cuenta de MercadoPago (UYU por defecto en Uruguay)`));
     console.log(colors.blue(`   Token: ${paymentData.token}`));
     console.log(colors.blue(`   Método de pago: ${paymentData.payment_method_id}`));
     console.log(colors.blue(`   Email: ${paymentData.payer.email}`));
