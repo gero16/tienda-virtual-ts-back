@@ -35,21 +35,8 @@ router.get("/check-usd-support", async (req: Request, res: Response) => {
     console.log(colors.cyan(`   🌍 País: ${userCountry}`));
     console.log(colors.cyan(`   🆔 User ID: ${userId}`));
 
-    // 2. Consultar métodos de pago disponibles para tu país
-    const paymentMethodsResponse = await axios.get(
-      `https://api.mercadopago.com/sites/${userCountry}/payment_methods`,
-      {
-        headers: { Authorization: `Bearer ${mpAccessToken}` }
-      }
-    );
-
-    // 3. Verificar si USD está disponible
-    const metodosConUSD = paymentMethodsResponse.data.filter((method: any) => {
-      return method.additional_info_needed && 
-             method.additional_info_needed.includes("currency_id");
-    });
-
-    // 4. Intentar crear una preferencia de prueba con USD
+    // 2. Intentar crear una preferencia de prueba con USD directamente
+    console.log(colors.yellow("   🧪 Intentando crear preferencia de prueba con USD..."));
     let soportaUSD = false;
     let errorUSD = null;
 
