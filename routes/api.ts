@@ -285,7 +285,7 @@ router.post("/create_preference", async (req: Request, res: Response) => {
         title: item.title.toString().substring(0, 255),
         quantity: quantityNum,
         unit_price: priceNum,
-        currency_id: item.currency_id || "UYU",
+        currency_id: "USD" as const, // 💵 Dólares estadounidenses
       };
     });
 
@@ -357,7 +357,7 @@ router.post("/create_preference_multi", async (req: Request, res: Response) => {
         title: item.title.toString().substring(0, 255),
         quantity: quantityNum, // Asegurar número
         unit_price: priceNum,  // Asegurar número
-        currency_id: "ARS" as const,
+        currency_id: "USD" as const, // 💵 Dólares estadounidenses
       };
     });
 
@@ -421,7 +421,7 @@ router.post("/create_preference_cart", async (req: Request, res: Response) => {
         title: item.name || item.title || `Producto ${index + 1}`,
         quantity: quantityNum,
         unit_price: priceNum,
-        currency_id: "ARS" as const,
+        currency_id: "USD" as const, // 💵 Dólares estadounidenses
       };
     });
 
@@ -847,6 +847,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       description: description || "Pago desde tienda virtual",
       installments: Number(installments) || 1,
       payment_method_id: payment_method_id,
+      currency_id: "USD", // 💵 Dólares estadounidenses
       payer: {
         email: payer?.email || "test@example.com",
         identification: payer?.identification || {

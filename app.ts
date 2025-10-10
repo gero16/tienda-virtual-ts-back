@@ -11,6 +11,7 @@ import mercadolibre from './routes/mercadolibre';
 import clientes from './routes/clientes'; // 🆕 Importar rutas de clientes
 import descuentos from './routes/descuentos'; // 🆕 Importar rutas de descuentos
 import cupones from './routes/cupones'; // 🆕 Importar rutas de cupones
+import sitemap from './routes/sitemap'; // 🆕 Importar rutas de sitemap/SEO
 
 const app : Express = express();
 const port = 3000;
@@ -45,6 +46,7 @@ app.use('/ml', mercadolibre);
 app.use('/api/clientes', clientes); // 🆕 Agregar rutas de clientes
 app.use('/api/descuentos', descuentos); // 🆕 Agregar rutas de descuentos
 app.use('/api/cupones', cupones); // 🆕 Agregar rutas de cupones
+app.use('/api', sitemap); // 🆕 Agregar rutas de sitemap y robots.txt para SEO
 app.get('/', (req: Request, res: Response) => {
   res.send('Ruta funcionando!');
 });
