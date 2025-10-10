@@ -688,25 +688,8 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         });
       }
       
-      console.log(colors.cyan(`💰 Total calculado desde DB: $${totalCalculado}`));
-      console.log(colors.cyan(`💰 Total enviado por frontend: $${transaction_amount}`));
-      
-      // VALIDAR QUE EL TOTAL COINCIDA (tolerancia de $0.10 por redondeos)
-      const diferencia = Math.abs(totalCalculado - Number(transaction_amount));
-      if (diferencia > 0.10) {
-        console.log(colors.red(`❌ FRAUDE DETECTADO: Diferencia de $${diferencia}`));
-        await session.abortTransaction();
-        session.endSession();
-        
-        return res.status(400).json({ 
-          error: "El monto no coincide con los precios reales de los productos",
-          total_esperado: totalCalculado,
-          total_recibido: transaction_amount,
-          diferencia: diferencia
-        });
-      }
-      
-      console.log(colors.green("✅ Precios validados correctamente"));
+      console.log(colors.cyan(`💰 Total calculado desde DB (sin descuentos): $${totalCalculado}`));
+      console.log(colors.blue(`ℹ️  Validación de total final se hará después de aplicar cupón (si existe)...`));
       
     } catch (validacionError: any) {
       console.log(colors.red("❌ Error validando precios, abortando transacción..."));
@@ -749,7 +732,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       
       console.log(colors.green(`✅ Cupón validado: ${cupon_codigo}`));
       console.log(colors.green(`   Tipo: ${cuponValidado.tipo_descuento}`));
-      console.log(colors.green(`   Valor: ${cuponValidado.valor_descuento}${cuponValidado.tipo_descuento === 'porcentaje' ? '%' : ' UYU'}`));
+      console.log(colors.green(`   Valor: ${cuponValidado.valor_descuento}${cuponValidado.tipo_descuento === 'porcentaje' ? '%' : ' USD'}`));
       console.log(colors.green(`   Descuento aplicado: $${descuentoCuponValidado}`));
       
       // Aplicar descuento del cupón al total
