@@ -1786,24 +1786,10 @@ async function robustSyncProductos() {
     console.error("❌ Error en estrategia 3:", error);
   }
 
-  // Estrategia 4: Sincronización combinada (estado + fecha) para máxima cobertura
-  console.log("📋 Estrategia 4: Sincronización combinada (estado + fecha)");
-  try {
-    const strategy4 = await syncByStatusAndDateRobust(token);
-    savePartial(strategy4.items, "strategy4-status-date");
-    allItems = allItems.concat(strategy4.items);
-    totalProcessed += strategy4.processed;
-    totalErrors += strategy4.errors;
-    strategies.push({ 
-      name: "Estado + Fecha", 
-      items: strategy4.items.length, 
-      processed: strategy4.processed, 
-      errors: strategy4.errors 
-    });
-    console.log(`📊 Estrategia 4: ${strategy4.items.length} productos únicos`);
-  } catch (error) {
-    console.error("❌ Error en estrategia 4:", error);
-  }
+  // ESTRATEGIA 4 DESHABILITADA: Productos muy concentrados hacen que cada día
+  // tenga >1050 productos, causando reintentos inútiles y ralentizando todo
+  console.log("⚠️ Estrategia 4 deshabilitada (productos muy concentrados)");
+  console.log("📊 Las 3 estrategias activas capturan ~1343 productos únicos");
 
   // Deduplicar TODOS los productos de todas las estrategias
   const uniqueItems = deduplicateItems(allItems);
@@ -3161,7 +3147,6 @@ export async function updateStockInMercadoLibre(itemId: string, newStock: number
 // =====================
 export { getCurrentToken };
 
-export default router;
 // Endpoint temporal para debuggear campos de ML
 router.get("/debug/producto/:ml_id", async (req: Request, res: Response) => {
   try {
@@ -3248,3 +3233,4 @@ router.post("/reset-auth", async (req: Request, res: Response) => {
   }
 });
 
+export default router;
