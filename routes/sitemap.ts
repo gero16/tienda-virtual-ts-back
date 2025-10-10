@@ -12,7 +12,7 @@ router.get("/sitemap.xml", async (req: Request, res: Response) => {
     const productos = await Producto.find({ 
       status: { $ne: 'paused' }, // Excluir productos pausados
       available_quantity: { $gt: 0 } // Solo productos con stock
-    }).select('ml_id title updatedAt');
+    }).select('ml_id title last_updated');
 
     // Construir el XML del sitemap
     let sitemap = '<?xml version="1.0" encoding="UTF-8"?>\n';
@@ -49,8 +49,8 @@ router.get("/sitemap.xml", async (req: Request, res: Response) => {
     // URLs de productos individuales
     for (const producto of productos) {
       const productId = producto.ml_id || producto._id;
-      const lastmod = producto.updatedAt 
-        ? new Date(producto.updatedAt).toISOString().split('T')[0] 
+      const lastmod = producto.last_updated 
+        ? new Date(producto.last_updated).toISOString().split('T')[0] 
         : new Date().toISOString().split('T')[0];
 
       sitemap += '  <url>\n';
