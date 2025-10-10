@@ -139,10 +139,13 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       console.log(colors.blue(`   ✅ ${item.name}`));
       console.log(colors.blue(`      Precio: $${precioReal} USD x ${item.cantidad} = $${subtotal} USD`));
 
+      // Limitar descripción a 256 caracteres (requisito de MercadoPago)
+      const description = (producto.description || producto.title).substring(0, 256);
+      
       itemsValidados.push({
         id: producto.ml_id,
-        title: producto.title,
-        description: producto.description || producto.title,
+        title: producto.title.substring(0, 255), // También limitar título por seguridad
+        description: description,
         picture_url: producto.images && producto.images[0] ? producto.images[0].url : undefined,
         quantity: item.cantidad,
         unit_price: precioReal,
@@ -202,7 +205,7 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
         email: customerData?.email || "cliente@example.com",
         phone: {
           area_code: "598",
-          number: customerData?.phone?.replace(/\D/g, '') || "099999999"
+          number: parseInt(customerData?.phone?.replace(/\D/g, '') || "099999999", 10) // Convertir a número
         },
         address: {
           street_name: customerData?.address || "Dirección",
