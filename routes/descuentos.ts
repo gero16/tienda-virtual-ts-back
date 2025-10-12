@@ -346,4 +346,112 @@ router.put("/actualizar", async (req: Request, res: Response) => {
   }
 });
 
+// =====================
+// 🔧 REPARAR descuentos con precio_original incorrecto
+// =====================
+router.post("/reparar", async (req: Request, res: Response) => {
+  try {
+    console.log(colors.blue(`🔧 Iniciando reparación de descuentos...`));
+
+    // Buscar todos los productos con descuento activo
+    const productos = await ProductoModel.find({ 
+      "descuento.activo": true 
+    });
+
+    console.log(colors.blue(`📦 Encontrados ${productos.length} productos con descuento activo`));
+
+    const resultados = [];
+    let reparados = 0;
+    let yaCorrectos = 0;
+
+    for (const producto of productos) {
+      try {
+        const descuento = producto.descuento;
+        if (!descuento || !descuento.activo) continue;
+
+        const precioActual = producto.price;
+        const precioOriginal = descuento.precio_original || precioActual;
+        const porcentaje = descuento.porcentaje;
+
+        // 🔍 Calcular qué precio debería tener con el descuento
+        const precioEsperado = Math.round(precioOriginal * (1 - porcentaje / 100) * 100) / 100;
+
+        // 🚨 Detectar si el precio original está mal (es igual al precio con descuento)
+        const diferencia = Math.abs(precioOriginal - precioActual);
+        
+        if (diferencia < 0.01) {
+          // El precio_original es igual al precio actual, necesita reparación
+          console.log(colors.yellow(`⚠️ PROBLEMA DETECTADO: ${producto.title}`));
+          console.log(colors.yellow(`   Precio original: $${precioOriginal} = Precio actual: $${precioActual}`));
+          console.log(colors.yellow(`   Porcentaje: ${porcentaje}%`));
+          
+          // 🔧 Recalcular precio original usando el porcentaje
+          // Si precio_actual = precio_original * (1 - porcentaje/100)
+          // Entonces: precio_original = precio_actual / (1 - porcentaje/100)
+          const precioOriginalCorrecto = Math.round((precioActual / (1 - porcentaje / 100)) * 100) / 100;
+          const precioConDescuentoCorrecto = Math.round(precioOriginalCorrecto * (1 - porcentaje / 100) * 100) / 100;
+          
+          console.log(colors.green(`✅ CORRECCIÓN: Precio original: $${precioOriginalCorrecto} → Precio con descuento: $${precioConDescuentoCorrecto}`));
+          
+          // Actualizar el producto
+          producto.descuento.precio_original = precioOriginalCorrecto;
+          producto.price = precioConDescuentoCorrecto;
+          await producto.save();
+          
+          reparados++;
+          resultados.push({
+            ml_id: producto.ml_id,
+            title: producto.title,
+            reparado: true,
+            precio_original_viejo: precioOriginal,
+            precio_original_nuevo: precioOriginalCorrecto,
+            precio_con_descuento: precioConDescuentoCorrecto,
+            porcentaje: porcentaje
+          });
+        } else {
+          // El descuento está correcto
+          yaCorrectos++;
+          console.log(colors.green(`✅ OK: ${producto.title} - Precio original: $${precioOriginal}, Con descuento: $${precioActual}`));
+          
+          resultados.push({
+            ml_id: producto.ml_id,
+            title: producto.title,
+            reparado: false,
+            mensaje: 'Descuento ya estaba correcto'
+          });
+        }
+
+      } catch (error: any) {
+        console.error(colors.red(`❌ Error procesando producto ${producto.ml_id}:`), error.message);
+        resultados.push({
+          ml_id: producto.ml_id,
+          reparado: false,
+          error: error.message
+        });
+      }
+    }
+
+    console.log(colors.green(`\n✅ Reparación completada:`));
+    console.log(colors.green(`   🔧 Productos reparados: ${reparados}`));
+    console.log(colors.green(`   ✓ Productos ya correctos: ${yaCorrectos}`));
+    console.log(colors.green(`   📊 Total procesados: ${productos.length}`));
+
+    return res.json({
+      success: true,
+      message: `Reparación completada: ${reparados} productos reparados, ${yaCorrectos} ya correctos`,
+      total_procesados: productos.length,
+      reparados: reparados,
+      ya_correctos: yaCorrectos,
+      resultados: resultados
+    });
+
+  } catch (error: any) {
+    console.error(colors.red("❌ Error reparando descuentos:"), error);
+    return res.status(500).json({ 
+      error: "Error interno del servidor", 
+      message: error.message 
+    });
+  }
+});
+
 export default router;

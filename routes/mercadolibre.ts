@@ -200,13 +200,32 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
     console.log("⚠️ No se pudo obtener la descripción para:", item.id);
   }
 
+    // 🔍 Verificar si el producto existe y tiene descuento activo
+    const productoExistente = await Producto.findOne({ ml_id: item.id });
+    let precioActualizado = item.price;
+    let descuentoActualizado = productoExistente?.descuento;
+    
+    // 🏷️ Si tiene descuento activo, recalcular precio con descuento usando el nuevo precio de ML
+    if (productoExistente?.descuento?.activo) {
+      console.log(`🏷️ Producto ${item.id} tiene descuento activo (${productoExistente.descuento.porcentaje}%), preservando descuento...`);
+      // Actualizar precio_original con el nuevo precio de ML
+      descuentoActualizado = {
+        ...productoExistente.descuento,
+        precio_original: item.price
+      };
+      // Recalcular precio con descuento
+      precioActualizado = Math.round(item.price * (1 - productoExistente.descuento.porcentaje / 100) * 100) / 100;
+      console.log(`   Precio ML: $${item.price} → Precio con descuento: $${precioActualizado}`);
+    }
+
     // --- Actualizar/Crear Producto ---
     let producto = await Producto.findOneAndUpdate(
     { ml_id: item.id },
     {
       ml_id: item.id,
       title: item.title,
-      price: item.price,
+      price: precioActualizado,
+      descuento: descuentoActualizado,
       available_quantity: item.available_quantity,
       status: item.status,
       // Imágenes en mejor calidad
