@@ -394,9 +394,11 @@ router.post("/reparar", async (req: Request, res: Response) => {
           console.log(colors.green(`✅ CORRECCIÓN: Precio original: $${precioOriginalCorrecto} → Precio con descuento: $${precioConDescuentoCorrecto}`));
           
           // Actualizar el producto
-          producto.descuento.precio_original = precioOriginalCorrecto;
-          producto.price = precioConDescuentoCorrecto;
-          await producto.save();
+          if (producto.descuento) {
+            producto.descuento.precio_original = precioOriginalCorrecto;
+            producto.price = precioConDescuentoCorrecto;
+            await producto.save();
+          }
           
           reparados++;
           resultados.push({
