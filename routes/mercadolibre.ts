@@ -251,6 +251,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       descuento: descuentoActualizado,
       available_quantity: item.available_quantity,
       status: item.status,
+      permalink: getCorrectPermalink(item), // ✅ AGREGADO: URL validada de la publicación
       // Imágenes en mejor calidad
       images: item.pictures?.map((picture: any) => ({
         id: picture.id,
@@ -3574,6 +3575,63 @@ router.post("/ml/productos/:ml_id/actualizar", async (req: Request, res: Respons
     console.error(`❌ Error actualizando producto ${req.params.ml_id}:`, error.message);
     res.status(500).json({ 
       error: "Error al actualizar el producto", 
+      details: error.message 
+    });
+  }
+});
+
+// -------------------- CORREGIR PERMALINKS VACÍOS --------------------
+router.post("/fix-empty-permalinks", async (req: Request, res: Response) => {
+  try {
+    console.log("🔧 Buscando productos sin permalink...");
+    
+    // Buscar productos con permalink vacío o null
+    const productosSinPermalink = await Producto.find({
+      $or: [
+        { permalink: "" },
+        { permalink: null },
+        { permalink: { $exists: false } }
+      ]
+    });
+    
+    console.log(`📊 Encontrados ${productosSinPermalink.length} productos sin permalink`);
+    
+    if (productosSinPermalink.length === 0) {
+      return res.json({
+        mensaje: "Todos los productos tienen permalink",
+        corregidos: 0
+      });
+    }
+    
+    const corregidos = [];
+    
+    for (const producto of productosSinPermalink) {
+      const permalinkCorrecto = getCorrectPermalink({ id: producto.ml_id });
+      
+      await Producto.updateOne(
+        { ml_id: producto.ml_id },
+        { $set: { permalink: permalinkCorrecto } }
+      );
+      
+      corregidos.push({
+        ml_id: producto.ml_id,
+        title: producto.title,
+        permalink_nuevo: permalinkCorrecto
+      });
+      
+      console.log(`✅ Corregido: ${producto.ml_id} → ${permalinkCorrecto}`);
+    }
+    
+    res.json({
+      mensaje: "Permalinks corregidos exitosamente",
+      total_corregidos: corregidos.length,
+      productos: corregidos
+    });
+    
+  } catch (error: any) {
+    console.error("❌ Error corrigiendo permalinks:", error.message);
+    res.status(500).json({ 
+      error: "Error al corregir permalinks", 
       details: error.message 
     });
   }
