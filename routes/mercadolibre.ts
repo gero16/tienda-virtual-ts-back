@@ -29,6 +29,29 @@ function deduplicateItems(items: any[]) {
   return Array.from(map.values());
 }
 
+// 🔧 Validar y corregir permalink para asegurar que apunte al producto correcto
+function getCorrectPermalink(itemDetail: any): string {
+  const mlId = itemDetail.id;
+  const apiPermalink = itemDetail.permalink;
+  
+  // Si no hay permalink de la API, construir uno estándar
+  if (!apiPermalink) {
+    return `https://articulo.mercadolibre.com.uy/${mlId}`;
+  }
+  
+  // Verificar si el permalink contiene el ID del producto actual
+  // Si no lo contiene, es probable que sea un permalink de catálogo o de otro vendedor
+  if (!apiPermalink.includes(mlId)) {
+    console.log(`⚠️ Permalink incorrecto detectado para ${mlId}`);
+    console.log(`   API devolvió: ${apiPermalink}`);
+    console.log(`   Usando formato estándar en su lugar`);
+    return `https://articulo.mercadolibre.com.uy/${mlId}`;
+  }
+  
+  // El permalink de la API parece correcto
+  return apiPermalink;
+}
+
 // Reintentos automáticos con pausa incremental
 async function retryRequest(fn: () => Promise<any>, maxRetries = 3) {
   for (let i = 0; i < maxRetries; i++) {
@@ -714,7 +737,7 @@ async function forceUpdateProductos() {
           price: itemDetail.price,
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
-          permalink: itemDetail.permalink || "", // URL de la publicación
+          permalink: getCorrectPermalink(itemDetail), // URL validada de la publicación
           // Imágenes en mejor calidad
           images: itemDetail.pictures?.map((picture: any) => ({
             id: picture.id,
@@ -1872,7 +1895,7 @@ async function robustSyncProductos() {
           price: itemDetail.price,
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
-          permalink: itemDetail.permalink || "", // URL de la publicación
+          permalink: getCorrectPermalink(itemDetail), // URL validada de la publicación
           // Imágenes en mejor calidad
           images: itemDetail.pictures?.map((picture: any) => ({
             id: picture.id,
@@ -3550,6 +3573,86 @@ router.post("/ml/productos/:ml_id/actualizar", async (req: Request, res: Respons
     console.error(`❌ Error actualizando producto ${req.params.ml_id}:`, error.message);
     res.status(500).json({ 
       error: "Error al actualizar el producto", 
+      details: error.message 
+    });
+  }
+});
+
+// -------------------- CORREGIR PERMALINKS --------------------
+router.post("/fix-permalinks", async (req: Request, res: Response) => {
+  try {
+    console.log("🔧 Iniciando corrección de permalinks...");
+    
+    // Obtener todos los productos
+    const productos = await Producto.find({});
+    console.log(`📊 Total de productos a verificar: ${productos.length}`);
+    
+    let corregidos = 0;
+    let sinCambios = 0;
+    let errores = 0;
+    const detalles: any[] = [];
+    
+    for (const producto of productos) {
+      try {
+        const permalinkActual = producto.permalink || "";
+        const mlId = producto.ml_id;
+        
+        // Verificar si el permalink es correcto
+        if (!permalinkActual || !permalinkActual.includes(mlId)) {
+          // Construir permalink correcto
+          const permalinkCorrecto = `https://articulo.mercadolibre.com.uy/${mlId}`;
+          
+          // Actualizar el producto
+          await Producto.updateOne(
+            { _id: producto._id },
+            { $set: { permalink: permalinkCorrecto } }
+          );
+          
+          corregidos++;
+          detalles.push({
+            ml_id: mlId,
+            title: producto.title,
+            anterior: permalinkActual,
+            nuevo: permalinkCorrecto,
+            estado: 'corregido'
+          });
+          
+          console.log(`✅ Corregido: ${mlId}`);
+          console.log(`   Anterior: ${permalinkActual || '(vacío)'}`);
+          console.log(`   Nuevo: ${permalinkCorrecto}`);
+        } else {
+          sinCambios++;
+        }
+      } catch (error: any) {
+        errores++;
+        console.error(`❌ Error procesando ${producto.ml_id}:`, error.message);
+        detalles.push({
+          ml_id: producto.ml_id,
+          title: producto.title,
+          estado: 'error',
+          error: error.message
+        });
+      }
+    }
+    
+    console.log(`\n📊 Resumen de corrección:`);
+    console.log(`   ✅ Corregidos: ${corregidos}`);
+    console.log(`   ℹ️  Sin cambios: ${sinCambios}`);
+    console.log(`   ❌ Errores: ${errores}`);
+    
+    res.json({
+      mensaje: "Corrección de permalinks completada",
+      total: productos.length,
+      corregidos,
+      sin_cambios: sinCambios,
+      errores,
+      detalles: detalles.slice(0, 50) // Mostrar solo los primeros 50 para no saturar la respuesta
+    });
+    
+  } catch (error: any) {
+    console.error("❌ Error corrigiendo permalinks:", error.message);
+    res.status(500).json({ 
+      error: "Error al corregir permalinks", 
       details: error.message 
     });
   }
