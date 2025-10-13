@@ -84,13 +84,19 @@ export interface IProducto extends Document {
   es_importacion?: boolean;
   requiere_stock_especial?: boolean;
   
-  // 🆕 CAMPOS PARA DESCUENTOS
+  // 🆕 CAMPOS PARA DESCUENTOS MANUALES (desde web)
   descuento?: {
     activo: boolean;
     porcentaje: number; // Porcentaje de descuento (ej: 10 para 10%)
     precio_original?: number; // Precio antes del descuento
     fecha_inicio?: Date;
     fecha_fin?: Date;
+  };
+  
+  // 🆕 DESCUENTO NATIVO DE MERCADOLIBRE
+  descuento_ml?: {
+    original_price: number; // Precio original en ML antes del descuento
+    deal_ids?: string[]; // IDs de ofertas/promociones de ML
   };
 }
 
@@ -186,6 +192,12 @@ const ProductoSchema = new Schema<IProducto>({
     precio_original: { type: Number },
     fecha_inicio: { type: Date },
     fecha_fin: { type: Date }
+  },
+  
+  // Descuento nativo de MercadoLibre
+  descuento_ml: {
+    original_price: { type: Number },
+    deal_ids: [{ type: String }]
   }
 });
 

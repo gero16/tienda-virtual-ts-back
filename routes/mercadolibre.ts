@@ -241,6 +241,14 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       console.log(`   Precio ML: $${item.price} → Precio con descuento: $${precioActualizado}`);
     }
 
+    // --- Detectar descuento nativo de MercadoLibre ---
+    const descuentoML = item.original_price && item.original_price !== item.price
+      ? {
+          original_price: item.original_price,
+          deal_ids: item.deal_ids || []
+        }
+      : undefined;
+    
     // --- Actualizar/Crear Producto ---
     let producto = await Producto.findOneAndUpdate(
     { ml_id: item.id },
@@ -249,6 +257,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       title: item.title,
       price: precioActualizado,
       descuento: descuentoActualizado,
+      descuento_ml: descuentoML, // ✅ NUEVO: Descuento nativo de ML
       available_quantity: item.available_quantity,
       status: item.status,
       permalink: getCorrectPermalink(item), // ✅ AGREGADO: URL validada de la publicación
