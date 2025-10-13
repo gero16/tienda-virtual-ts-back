@@ -3578,6 +3578,158 @@ router.post("/ml/productos/:ml_id/actualizar", async (req: Request, res: Respons
   }
 });
 
+// -------------------- VALIDAR CONCORDANCIA DB vs ML --------------------
+router.get("/validar-concordancia", async (req: Request, res: Response) => {
+  try {
+    console.log("🔍 Iniciando validación de concordancia DB vs MercadoLibre...");
+    
+    const token = await getCurrentToken();
+    if (!token) {
+      return res.status(401).json({ error: "No autenticado con MercadoLibre" });
+    }
+    
+    // Obtener parámetros opcionales
+    const limit = parseInt(req.query.limit as string) || 50; // Por defecto verificar 50 productos
+    const fullCheck = req.query.full === 'true'; // Si true, verifica todos los productos
+    
+    // Obtener productos de tu DB
+    const productosDB = fullCheck 
+      ? await Producto.find({}).lean()
+      : await Producto.find({}).limit(limit).lean();
+    
+    console.log(`📊 Validando ${productosDB.length} productos...`);
+    
+    const discrepancias: any[] = [];
+    const correctos: any[] = [];
+    let erroresAPI = 0;
+    
+    for (const productoDB of productosDB) {
+      try {
+        // Consultar el mismo producto en la API de ML
+        const { data: productoML } = await axios.get(
+          `https://api.mercadolibre.com/items/${productoDB.ml_id}`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        
+        const diferencias: string[] = [];
+        
+        // 1. Validar PRECIO
+        if (Math.abs(productoDB.price - productoML.price) > 0.01) {
+          diferencias.push(`Precio: DB=${productoDB.price} vs ML=${productoML.price}`);
+        }
+        
+        // 2. Validar STOCK
+        if (productoDB.available_quantity !== productoML.available_quantity) {
+          diferencias.push(`Stock: DB=${productoDB.available_quantity} vs ML=${productoML.available_quantity}`);
+        }
+        
+        // 3. Validar STATUS
+        if (productoDB.status !== productoML.status) {
+          diferencias.push(`Status: DB=${productoDB.status} vs ML=${productoML.status}`);
+        }
+        
+        // 4. Validar TÍTULO
+        if (productoDB.title !== productoML.title) {
+          diferencias.push(`Título diferente`);
+        }
+        
+        // 5. Validar PERMALINK
+        const permalinkCorrecto = getCorrectPermalink(productoML);
+        if (productoDB.permalink !== permalinkCorrecto) {
+          diferencias.push(`Permalink: DB=${productoDB.permalink} vs Correcto=${permalinkCorrecto}`);
+        }
+        
+        // 6. Validar MANUFACTURING_TIME
+        const manufacturingTime = productoML.sale_terms?.find((term: any) => 
+          term.id === "MANUFACTURING_TIME"
+        );
+        const diasML = manufacturingTime?.value_struct?.number || 0;
+        const diasDB = productoDB.dropshipping?.dias_preparacion || 0;
+        
+        if (diasML !== diasDB) {
+          diferencias.push(`Días preparación: DB=${diasDB} vs ML=${diasML}`);
+        }
+        
+        // 7. Validar SELLER_ID (que sea tu producto)
+        if (productoML.seller_id && productoML.seller_id !== token.user_id) {
+          diferencias.push(`⚠️ ALERTA: Producto de OTRO vendedor! Seller=${productoML.seller_id}`);
+        }
+        
+        if (diferencias.length > 0) {
+          discrepancias.push({
+            ml_id: productoDB.ml_id,
+            title: productoDB.title,
+            diferencias: diferencias,
+            datos_db: {
+              precio: productoDB.price,
+              stock: productoDB.available_quantity,
+              status: productoDB.status,
+              dias_preparacion: diasDB
+            },
+            datos_ml: {
+              precio: productoML.price,
+              stock: productoML.available_quantity,
+              status: productoML.status,
+              dias_preparacion: diasML,
+              seller_id: productoML.seller_id
+            }
+          });
+        } else {
+          correctos.push({
+            ml_id: productoDB.ml_id,
+            title: productoDB.title
+          });
+        }
+        
+        // Pausa para no saturar la API
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+      } catch (error: any) {
+        erroresAPI++;
+        console.error(`❌ Error consultando ${productoDB.ml_id}:`, error.message);
+        
+        discrepancias.push({
+          ml_id: productoDB.ml_id,
+          title: productoDB.title,
+          diferencias: [`ERROR API: ${error.message}`],
+          error: true
+        });
+      }
+    }
+    
+    // Generar reporte
+    const porcentajeCorrectos = Math.round((correctos.length / productosDB.length) * 100);
+    const porcentajeDiscrepancias = Math.round((discrepancias.length / productosDB.length) * 100);
+    
+    console.log(`\n📊 Validación completada:`);
+    console.log(`   ✅ Correctos: ${correctos.length} (${porcentajeCorrectos}%)`);
+    console.log(`   ⚠️  Con diferencias: ${discrepancias.length} (${porcentajeDiscrepancias}%)`);
+    console.log(`   ❌ Errores API: ${erroresAPI}`);
+    
+    res.json({
+      mensaje: "Validación de concordancia completada",
+      total_productos: productosDB.length,
+      correctos: correctos.length,
+      con_discrepancias: discrepancias.length,
+      errores_api: erroresAPI,
+      porcentaje_correcto: porcentajeCorrectos,
+      discrepancias: discrepancias,
+      productos_correctos: fullCheck ? [] : correctos.slice(0, 10), // No enviar todos si es full check
+      recomendaciones: {
+        sincronizar: discrepancias.length > 0,
+        productos_a_revisar: discrepancias.map(d => d.ml_id)
+      }
+    });
+    
+  } catch (error: any) {
+    console.error("❌ Error en validación de concordancia:", error.message);
+    res.status(500).json({ 
+      error: "Error al validar concordancia", 
+      details: error.message 
+    });
+  }
+});
+
 // -------------------- CORREGIR PERMALINKS --------------------
 router.post("/fix-permalinks", async (req: Request, res: Response) => {
   try {
