@@ -622,6 +622,7 @@ router.get("/status", async (req: Request, res: Response) => {
 
     res.json({
       authenticated: !!token?.access_token,
+      user_id: token?.user_id || null,
       token_expires: token
         ? new Date(token.last_updated.getTime() + token.expires_in * 1000)
         : null,
@@ -3651,8 +3652,9 @@ router.get("/validar-concordancia", async (req: Request, res: Response) => {
         }
         
         // 7. Validar SELLER_ID (que sea tu producto)
-        if (productoML.seller_id && productoML.seller_id !== token.user_id) {
-          diferencias.push(`⚠️ ALERTA: Producto de OTRO vendedor! Seller=${productoML.seller_id}`);
+        // Comparar convirtiendo ambos a String para evitar problemas de tipos
+        if (productoML.seller_id && String(productoML.seller_id) !== String(token.user_id)) {
+          diferencias.push(`⚠️ ALERTA: Producto de OTRO vendedor! Seller=${productoML.seller_id} (Tu user_id: ${token.user_id})`);
         }
         
         if (diferencias.length > 0) {
