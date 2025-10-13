@@ -9,7 +9,7 @@ async function syncProductos() {
     console.log('⚠️  ADVERTENCIA: Este proceso puede tardar varios minutos.\n');
     
     const response = await axios.get(
-      `${API_URL}/ml/sync/productos`,
+      `${API_URL}/ml/sync/force`,
       {
         timeout: 300000 // 5 minutos de timeout
       }
