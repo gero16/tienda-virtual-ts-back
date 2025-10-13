@@ -32,35 +32,24 @@ function deduplicateItems(items: any[]) {
 // 🔧 Validar y corregir permalink para asegurar que apunte al producto correcto
 function getCorrectPermalink(itemDetail: any): string {
   const mlId = itemDetail.id; // Ej: "MLU693479306" o "MLU-693479306"
-  const apiPermalink = itemDetail.permalink;
   
+  // SIEMPRE construir el permalink manualmente para evitar enlaces a otros vendedores
   // Normalizar el ID para asegurar que tenga el formato correcto con guion
   // MLU693479306 → MLU-693479306
   const normalizedId = mlId.includes('-') ? mlId : mlId.replace(/^([A-Z]{3})(\d+)/, '$1-$2');
   
-  // Si no hay permalink de la API, construir uno con el formato correcto
-  if (!apiPermalink) {
-    return `https://articulo.mercadolibre.com.uy/${normalizedId}`;
-  }
+  // Construir permalink estándar que SIEMPRE apunta al producto específico del vendedor
+  const correctPermalink = `https://articulo.mercadolibre.com.uy/${normalizedId}`;
   
-  // Verificar si el permalink contiene el ID del producto actual (con o sin guion)
-  const idSinGuion = mlId.replace('-', '');
-  if (!apiPermalink.includes(idSinGuion)) {
-    console.log(`⚠️ Permalink incorrecto detectado para ${mlId}`);
+  // Log si el permalink de la API es diferente (para debugging)
+  const apiPermalink = itemDetail.permalink;
+  if (apiPermalink && !apiPermalink.includes(mlId.replace('-', ''))) {
+    console.log(`⚠️ Permalink de API incorrecto detectado para ${mlId}`);
     console.log(`   API devolvió: ${apiPermalink}`);
-    console.log(`   Usando formato estándar en su lugar`);
-    return `https://articulo.mercadolibre.com.uy/${normalizedId}`;
+    console.log(`   Usando permalink construido: ${correctPermalink}`);
   }
   
-  // El permalink de la API parece correcto, pero asegurar formato mínimo
-  // Extraer solo la parte esencial: https://articulo.mercadolibre.com.uy/MLU-XXXXXX
-  const match = apiPermalink.match(/(https:\/\/articulo\.mercadolibre\.com\.uy\/[A-Z]{3}-\d+)/);
-  if (match) {
-    return match[1];
-  }
-  
-  // Si no se pudo extraer, devolver el permalink original
-  return apiPermalink;
+  return correctPermalink;
 }
 
 // Reintentos automáticos con pausa incremental
