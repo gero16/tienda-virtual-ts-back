@@ -344,7 +344,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
           handlingTime = manufacturingTime.value_struct.number;
         }
         
-        const varianteProductType = handlingTime > 14 ? "dropshipping" : "stock_fisico";
+        const varianteProductType = handlingTime > 10 ? "dropshipping" : "stock_fisico";
         const varianteDeliveryTimes = calculateDeliveryTimes(varianteProductType, handlingTime);
         
         const varianteUpdateData: any = {
@@ -421,7 +421,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       handlingTime = manufacturingTime.value_struct.number;
     }
     
-    const productType = handlingTime > 14 ? "dropshipping" : "stock_fisico";
+    const productType = handlingTime > 10 ? "dropshipping" : "stock_fisico";
     const deliveryTimes = calculateDeliveryTimes(productType, handlingTime);
     
     // Actualizar producto con información de dropshipping
@@ -842,7 +842,7 @@ async function forceUpdateProductos() {
         handlingTime = manufacturingTime.value_struct.number;
       }
       
-      const productType = handlingTime > 14 ? "dropshipping" : "stock_fisico";
+      const productType = handlingTime > 10 ? "dropshipping" : "stock_fisico";
       const deliveryTimes = calculateDeliveryTimes(productType, handlingTime);
       
       // Actualizar producto con información de dropshipping
@@ -1998,7 +1998,7 @@ async function robustSyncProductos() {
         handlingTime = manufacturingTime.value_struct.number;
       }
       
-      const productType = handlingTime > 14 ? "dropshipping" : "stock_fisico";
+      const productType = handlingTime > 10 ? "dropshipping" : "stock_fisico";
       const deliveryTimes = calculateDeliveryTimes(productType, handlingTime);
       
       // Actualizar producto con información de dropshipping
@@ -3188,16 +3188,16 @@ router.get("/productos/estadisticas", async (req: Request, res: Response) => {
 // Endpoint para productos tipo dropshipping con más de 14 días
 router.get("/productos/tipo/dropshipping", async (req: Request, res: Response) => {
   try {
-    // Buscar productos base con dropshipping > 14 días
+    // Buscar productos base con dropshipping > 10 días
     const productosDropshipping = await Producto.find({
       tipo_venta: "dropshipping",
-      "dropshipping.dias_preparacion": { $gt: 14 }
+      "dropshipping.dias_preparacion": { $gt: 10 }
     }).populate("variantes");
 
-    // Buscar variantes con dropshipping > 14 días
+    // Buscar variantes con dropshipping > 10 días
     const variantesDropshipping = await Variante.find({
       tipo_venta: "dropshipping",
-      "dropshipping.dias_preparacion": { $gt: 14 }
+      "dropshipping.dias_preparacion": { $gt: 10 }
     }).populate("product_id");
 
     res.json({
