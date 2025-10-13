@@ -31,24 +31,35 @@ function deduplicateItems(items: any[]) {
 
 // 🔧 Validar y corregir permalink para asegurar que apunte al producto correcto
 function getCorrectPermalink(itemDetail: any): string {
-  const mlId = itemDetail.id;
+  const mlId = itemDetail.id; // Ej: "MLU693479306" o "MLU-693479306"
   const apiPermalink = itemDetail.permalink;
   
-  // Si no hay permalink de la API, construir uno estándar
+  // Normalizar el ID para asegurar que tenga el formato correcto con guion
+  // MLU693479306 → MLU-693479306
+  const normalizedId = mlId.includes('-') ? mlId : mlId.replace(/^([A-Z]{3})(\d+)/, '$1-$2');
+  
+  // Si no hay permalink de la API, construir uno con el formato correcto
   if (!apiPermalink) {
-    return `https://articulo.mercadolibre.com.uy/${mlId}`;
+    return `https://articulo.mercadolibre.com.uy/${normalizedId}`;
   }
   
-  // Verificar si el permalink contiene el ID del producto actual
-  // Si no lo contiene, es probable que sea un permalink de catálogo o de otro vendedor
-  if (!apiPermalink.includes(mlId)) {
+  // Verificar si el permalink contiene el ID del producto actual (con o sin guion)
+  const idSinGuion = mlId.replace('-', '');
+  if (!apiPermalink.includes(idSinGuion)) {
     console.log(`⚠️ Permalink incorrecto detectado para ${mlId}`);
     console.log(`   API devolvió: ${apiPermalink}`);
     console.log(`   Usando formato estándar en su lugar`);
-    return `https://articulo.mercadolibre.com.uy/${mlId}`;
+    return `https://articulo.mercadolibre.com.uy/${normalizedId}`;
   }
   
-  // El permalink de la API parece correcto
+  // El permalink de la API parece correcto, pero asegurar formato mínimo
+  // Extraer solo la parte esencial: https://articulo.mercadolibre.com.uy/MLU-XXXXXX
+  const match = apiPermalink.match(/(https:\/\/articulo\.mercadolibre\.com\.uy\/[A-Z]{3}-\d+)/);
+  if (match) {
+    return match[1];
+  }
+  
+  // Si no se pudo extraer, devolver el permalink original
   return apiPermalink;
 }
 
@@ -3597,11 +3608,18 @@ router.post("/fix-permalinks", async (req: Request, res: Response) => {
         const permalinkActual = producto.permalink || "";
         const mlId = producto.ml_id;
         
-        // Verificar si el permalink es correcto
-        if (!permalinkActual || !permalinkActual.includes(mlId)) {
-          // Construir permalink correcto
-          const permalinkCorrecto = `https://articulo.mercadolibre.com.uy/${mlId}`;
-          
+        // Normalizar el ID para asegurar que tenga el formato correcto con guion
+        // MLU644321979 → MLU-644321979
+        let normalizedId = mlId;
+        if (!mlId.includes('-')) {
+          normalizedId = mlId.replace(/^([A-Z]{3})(\d+)/, '$1-$2');
+        }
+        
+        const permalinkCorrecto = `https://articulo.mercadolibre.com.uy/${normalizedId}`;
+        
+        // Verificar si el permalink necesita corrección
+        // Un permalink es correcto si es exactamente el formato simple con el ID normalizado
+        if (permalinkActual !== permalinkCorrecto) {
           // Actualizar el producto
           await Producto.updateOne(
             { _id: producto._id },
@@ -3617,9 +3635,11 @@ router.post("/fix-permalinks", async (req: Request, res: Response) => {
             estado: 'corregido'
           });
           
-          console.log(`✅ Corregido: ${mlId}`);
-          console.log(`   Anterior: ${permalinkActual || '(vacío)'}`);
-          console.log(`   Nuevo: ${permalinkCorrecto}`);
+          if (corregidos <= 10) {
+            console.log(`✅ Corregido: ${mlId}`);
+            console.log(`   Anterior: ${permalinkActual || '(vacío)'}`);
+            console.log(`   Nuevo: ${permalinkCorrecto}`);
+          }
         } else {
           sinCambios++;
         }
