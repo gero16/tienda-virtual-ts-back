@@ -714,6 +714,7 @@ async function forceUpdateProductos() {
           price: itemDetail.price,
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
+          permalink: itemDetail.permalink || "", // URL de la publicación
           // Imágenes en mejor calidad
           images: itemDetail.pictures?.map((picture: any) => ({
             id: picture.id,
@@ -920,7 +921,7 @@ router.get("/productos/bestsellers", async (req: Request, res: Response) => {
       status: { $ne: 'paused' },
       sold_quantity: { $gt: 0 }
     })
-    .select('ml_id title price sold_quantity main_image images status metrics descuento') // Solo campos necesarios
+    .select('ml_id title price sold_quantity main_image images status metrics descuento permalink') // Solo campos necesarios
     .sort({ sold_quantity: -1 })
     .limit(limit)
     .lean();
@@ -941,7 +942,7 @@ router.get("/productos/featured", async (req: Request, res: Response) => {
       status: { $ne: 'paused' },
       available_quantity: { $gt: 0 }
     })
-    .select('ml_id title price main_image images status metrics health descuento available_quantity')
+    .select('ml_id title price main_image images status metrics health descuento available_quantity permalink')
     .lean();
     
     // Calcular score en backend
@@ -982,7 +983,7 @@ router.get("/productos/discounted", async (req: Request, res: Response) => {
         { main_image: { $exists: true, $ne: null } }
       ]
     })
-    .select('ml_id title price main_image images descuento available_quantity status')
+    .select('ml_id title price main_image images descuento available_quantity status permalink')
     .limit(limit)
     .lean();
     
@@ -1871,6 +1872,7 @@ async function robustSyncProductos() {
           price: itemDetail.price,
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
+          permalink: itemDetail.permalink || "", // URL de la publicación
           // Imágenes en mejor calidad
           images: itemDetail.pictures?.map((picture: any) => ({
             id: picture.id,

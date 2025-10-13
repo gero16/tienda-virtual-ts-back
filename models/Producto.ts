@@ -7,6 +7,7 @@ export interface IProducto extends Document {
   price: number;
   available_quantity: number;
   status: string;
+  permalink?: string; // URL de la publicación en MercadoLibre
   images: Array<{
     id: string;
     url: string;
@@ -99,6 +100,7 @@ const ProductoSchema = new Schema<IProducto>({
   price: { type: Number, required: true },
   available_quantity: { type: Number, required: true },
   status: { type: String, required: true },
+  permalink: { type: String, default: "" }, // URL de la publicación en MercadoLibre
   images: [{
     id: String,
     url: String,
