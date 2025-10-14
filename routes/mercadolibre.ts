@@ -967,19 +967,41 @@ router.get("/productos/bestsellers", async (req: Request, res: Response) => {
   }
 });
 
-// Endpoint para productos destacados (featured)
+// Endpoint para productos destacados (featured) - MEJORADO con selección manual
 router.get("/productos/featured", async (req: Request, res: Response) => {
   try {
     const limit = parseInt(req.query.limit as string) || 12;
     
-    const productos = await Producto.find({
+    // 🆕 PRIMERO: Buscar productos marcados manualmente como destacados
+    const productosDestacadosManuales = await Producto.find({
+      destacado: true,
       status: { $ne: 'paused' },
       available_quantity: { $gt: 0 }
     })
-    .select('ml_id title price main_image images status metrics health descuento available_quantity permalink')
+    .select('ml_id title price main_image images status metrics health descuento available_quantity permalink categoria variantes')
+    .populate('variantes')
+    .limit(limit)
     .lean();
     
-    // Calcular score en backend
+    // Si hay suficientes productos destacados manuales, usarlos
+    if (productosDestacadosManuales.length >= limit) {
+      res.setHeader('Cache-Control', 'public, max-age=300');
+      return res.json(productosDestacadosManuales);
+    }
+    
+    // Si no hay suficientes, completar con sistema automático
+    const productosRestantes = limit - productosDestacadosManuales.length;
+    
+    const productos = await Producto.find({
+      destacado: { $ne: true }, // Excluir los ya destacados manualmente
+      status: { $ne: 'paused' },
+      available_quantity: { $gt: 0 }
+    })
+    .select('ml_id title price main_image images status metrics health descuento available_quantity permalink categoria variantes')
+    .populate('variantes')
+    .lean();
+    
+    // Calcular score en backend para productos automáticos
     const productosConScore = productos.map(p => {
       const visitas = p.metrics?.visits || 0;
       const rating = p.metrics?.reviews.rating_average || 0;
@@ -991,15 +1013,63 @@ router.get("/productos/featured", async (req: Request, res: Response) => {
       return { ...p, score };
     });
     
-    // Ordenar y limitar
-    const featured = productosConScore
+    // Ordenar y tomar los mejores
+    const productosAutomaticos = productosConScore
       .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+      .slice(0, productosRestantes);
+    
+    // Combinar productos destacados manuales con automáticos
+    const featured = [...productosDestacadosManuales, ...productosAutomaticos];
     
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.json(featured);
   } catch (err: any) {
     res.status(500).json({ error: "Error al obtener featured: " + err.message });
+  }
+});
+
+// 🆕 Endpoint para marcar/desmarcar producto como destacado
+router.put("/productos/:id/destacado", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { destacado } = req.body;
+    
+    // Validar que destacado sea un booleano
+    if (typeof destacado !== 'boolean') {
+      return res.status(400).json({ 
+        error: "El campo 'destacado' debe ser un booleano (true o false)" 
+      });
+    }
+    
+    // Buscar el producto por _id o ml_id
+    let producto = await Producto.findById(id);
+    
+    if (!producto) {
+      // Si no se encuentra por _id, buscar por ml_id
+      producto = await Producto.findOne({ ml_id: id });
+    }
+    
+    if (!producto) {
+      return res.status(404).json({ 
+        error: "Producto no encontrado" 
+      });
+    }
+    
+    // Actualizar el campo destacado
+    producto.destacado = destacado;
+    await producto.save();
+    
+    res.json({ 
+      message: `Producto ${destacado ? 'marcado como destacado' : 'desmarcado como destacado'} exitosamente`,
+      producto: {
+        _id: producto._id,
+        ml_id: producto.ml_id,
+        title: producto.title,
+        destacado: producto.destacado
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Error al actualizar producto: " + err.message });
   }
 });
 

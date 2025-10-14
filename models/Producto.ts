@@ -98,6 +98,9 @@ export interface IProducto extends Document {
     original_price: number; // Precio original en ML antes del descuento
     deal_ids?: string[]; // IDs de ofertas/promociones de ML
   };
+  
+  // 🆕 CAMPO PARA PRODUCTOS DESTACADOS (selección manual)
+  destacado?: boolean;
 }
 
 const ProductoSchema = new Schema<IProducto>({
@@ -198,7 +201,10 @@ const ProductoSchema = new Schema<IProducto>({
   descuento_ml: {
     original_price: { type: Number },
     deal_ids: [{ type: String }]
-  }
+  },
+  
+  // 🆕 CAMPO PARA PRODUCTOS DESTACADOS
+  destacado: { type: Boolean, default: false }
 });
 
 export default model<IProducto>("Producto", ProductoSchema);
