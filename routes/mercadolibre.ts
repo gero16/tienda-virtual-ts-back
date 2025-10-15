@@ -1996,6 +1996,100 @@ router.post("/sync/backfill-missing", async (req: Request, res: Response) => {
   }
 });
 
+// 🆕 Diagnóstico extendido: usa TODAS las estrategias para listar IDs ML y comparar con DB
+router.get("/sync/diagnose-gap-extended", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) return res.status(401).json({ error: "No autenticado" });
+
+    console.log("🔍 Diagnóstico EXTENDIDO de gap iniciado...");
+    let allItems: string[] = [];
+    const s1 = await paginateWithLimitRobust(token, 50, 60);
+    const s2 = await paginateWithLimitRobust(token, 25, 80);
+    const s3 = await syncByStatusRobust(token);
+    const s4 = await syncByStatusAndDateRobust(token);
+    const s5 = await syncActiveByPriceRanges(token);
+    const s6 = await syncByCategoriesRobust(token);
+    const s7 = await syncByOrderingRobust(token);
+    const s8 = await syncViaPublicSearch(token);
+    allItems = allItems.concat(s1.items, s2.items, s3.items, s4.items, s5.items, s6.items, s7.items, s8.items);
+    const mlIdSet = new Set<string>(deduplicateItems(allItems));
+
+    const dbProducts = await Producto.find({}, 'ml_id').lean();
+    const dbIdSet = new Set<string>((dbProducts || []).map((p: any) => p.ml_id));
+    const missingIds = Array.from(mlIdSet).filter(id => !dbIdSet.has(id));
+
+    return res.json({
+      message: "Diagnóstico EXTENDIDO completado",
+      counts: { ml_seen: mlIdSet.size, db_seen: dbIdSet.size, missing: missingIds.length },
+      suggestion: missingIds.length > 0 ? "Ejecuta POST /ml/sync/backfill-missing-extended" : "Sin faltantes detectados",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("❌ Error en diagnose-gap-extended:", err);
+    return res.status(500).json({ error: "Error en diagnose-gap-extended: " + err.message });
+  }
+});
+
+// 🆕 Backfill extendido: intenta completar IDs faltantes encontrados por diagnóstico extendido
+router.post("/sync/backfill-missing-extended", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) return res.status(401).json({ error: "No autenticado" });
+
+    let allItems: string[] = [];
+    const s1 = await paginateWithLimitRobust(token, 50, 60);
+    const s2 = await paginateWithLimitRobust(token, 25, 80);
+    const s3 = await syncByStatusRobust(token);
+    const s4 = await syncByStatusAndDateRobust(token);
+    const s5 = await syncActiveByPriceRanges(token);
+    const s6 = await syncByCategoriesRobust(token);
+    const s7 = await syncByOrderingRobust(token);
+    const s8 = await syncViaPublicSearch(token);
+    allItems = allItems.concat(s1.items, s2.items, s3.items, s4.items, s5.items, s6.items, s7.items, s8.items);
+    const mlIdSet = new Set<string>(deduplicateItems(allItems));
+
+    const dbProducts = await Producto.find({}, 'ml_id').lean();
+    const dbIdSet = new Set<string>((dbProducts || []).map((p: any) => p.ml_id));
+    const missingIds = Array.from(mlIdSet).filter(id => !dbIdSet.has(id));
+    if (missingIds.length === 0) return res.json({ message: 'No hay faltantes para backfill (extended)' });
+
+    let ok = 0; let errors = 0; const errorSamples: any[] = [];
+    for (const id of missingIds) {
+      try {
+        const { data: itemDetail } = await axios.get(
+          `https://api.mercadolibre.com/items/${id}`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        await Producto.findOneAndUpdate(
+          { ml_id: itemDetail.id },
+          {
+            ml_id: itemDetail.id,
+            title: itemDetail.title,
+            price: itemDetail.price,
+            available_quantity: itemDetail.available_quantity,
+            status: itemDetail.status,
+            permalink: getCorrectPermalink(itemDetail),
+            images: itemDetail.pictures?.map((p: any) => ({ id: p.id, url: p.secure_url?.replace('-I.jpg', '-O.jpg') || p.url, max_size: p.max_size })) || [],
+            category_id: itemDetail.category_id || "",
+          },
+          { upsert: true, new: true }
+        );
+        ok++;
+        await new Promise(r => setTimeout(r, 60));
+      } catch (e: any) {
+        errors++;
+        if (errorSamples.length < 10) errorSamples.push({ id, error: e?.response?.status || e?.message });
+      }
+    }
+
+    return res.json({ message: 'Backfill (extended) completado', tried: missingIds.length, ok, errors, errorSamples, timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    console.error("❌ Error en backfill-missing-extended:", err);
+    return res.status(500).json({ error: "Error en backfill-missing-extended: " + err.message });
+  }
+});
+
 // 🧠 Función extendida que agrega estrategias adicionales a la robusta
 async function robustSyncExtended() {
   const token = await getCurrentToken();
