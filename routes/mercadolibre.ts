@@ -1866,6 +1866,136 @@ router.get("/sync/force-extended", async (req: Request, res: Response) => {
   }
 });
 
+// 🆕 Diagnóstico del gap: compara IDs vistos en ML vs DB y clasifica faltantes
+router.get("/sync/diagnose-gap", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) return res.status(401).json({ error: "No autenticado" });
+
+    console.log("🔍 Diagnóstico de gap iniciado...");
+
+    // 1) Obtener IDs desde varias fuentes (rápido): búsqueda pública + paginación 50
+    const publicRes = await syncViaPublicSearch(token);
+    const paginate50 = await paginateWithLimitRobust(token, 50, 40);
+    const mlIdSet = new Set<string>([...publicRes.items, ...paginate50.items]);
+
+    // 2) IDs en DB
+    const dbProducts = await Producto.find({}, 'ml_id').lean();
+    const dbIdSet = new Set<string>((dbProducts || []).map((p: any) => p.ml_id));
+
+    // 3) Faltantes = ML - DB
+    const missingIds = Array.from(mlIdSet).filter(id => !dbIdSet.has(id));
+
+    // 4) Clasificar faltantes con /items?ids= (lotes de 20)
+    const classify: Record<string, number> = { ok: 0, not_found: 0, forbidden: 0, other_error: 0 };
+    const samples: any[] = [];
+    const chunk = <T>(arr: T[], size: number) => arr.reduce((acc: T[][], _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), [] as T[][]);
+    const chunks = chunk(missingIds.slice(0, 400), 20); // limitar a 400 para diagnóstico rápido
+
+    for (const group of chunks) {
+      try {
+        const url = `https://api.mercadolibre.com/items?ids=${group.join(',')}`;
+        const { data } = await axios.get(url, { headers: { Authorization: `Bearer ${token.access_token}` } });
+        for (const item of data) {
+          if (item.code === 200 && item.body?.id) {
+            classify.ok++;
+            if (samples.length < 10) samples.push({ id: item.body.id, status: item.body.status });
+          } else if (item.code === 404) {
+            classify.not_found++;
+          } else if (item.code === 401 || item.code === 403) {
+            classify.forbidden++;
+          } else {
+            classify.other_error++;
+          }
+        }
+        await new Promise(r => setTimeout(r, 150));
+      } catch (e: any) {
+        console.log('⚠️ Error clasificando lote:', e?.message);
+      }
+    }
+
+    return res.json({
+      message: "Diagnóstico completado",
+      counts: {
+        ml_seen: mlIdSet.size,
+        db_seen: dbIdSet.size,
+        missing: missingIds.length,
+        classify,
+      },
+      samples,
+      suggestion: missingIds.length > 0 ? "Ejecuta /ml/sync/backfill-missing para intentar completar faltantes" : "Sin faltantes detectados",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("❌ Error en diagnose-gap:", err);
+    return res.status(500).json({ error: "Error en diagnose-gap: " + err.message });
+  }
+});
+
+// 🆕 Backfill de IDs faltantes: intenta guardar sólo los que faltan según diagnóstico rápido
+router.post("/sync/backfill-missing", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) return res.status(401).json({ error: "No autenticado" });
+
+    // 1) Armar set ML (público + paginate 50)
+    const publicRes = await syncViaPublicSearch(token);
+    const paginate50 = await paginateWithLimitRobust(token, 50, 40);
+    const mlIdSet = new Set<string>([...publicRes.items, ...paginate50.items]);
+
+    // 2) Set DB
+    const dbProducts = await Producto.find({}, 'ml_id').lean();
+    const dbIdSet = new Set<string>((dbProducts || []).map((p: any) => p.ml_id));
+
+    // 3) Faltantes
+    const missingIds = Array.from(mlIdSet).filter(id => !dbIdSet.has(id));
+    if (missingIds.length === 0) return res.json({ message: 'No hay faltantes para backfill' });
+
+    let ok = 0; let errors = 0; const errorSamples: any[] = [];
+    for (const id of missingIds) {
+      try {
+        const { data: itemDetail } = await axios.get(
+          `https://api.mercadolibre.com/items/${id}`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+
+        // Guardar mínimo en DB
+        await Producto.findOneAndUpdate(
+          { ml_id: itemDetail.id },
+          {
+            ml_id: itemDetail.id,
+            title: itemDetail.title,
+            price: itemDetail.price,
+            available_quantity: itemDetail.available_quantity,
+            status: itemDetail.status,
+            permalink: getCorrectPermalink(itemDetail),
+            images: itemDetail.pictures?.map((p: any) => ({ id: p.id, url: p.secure_url?.replace('-I.jpg', '-O.jpg') || p.url, max_size: p.max_size })) || [],
+            category_id: itemDetail.category_id || "",
+          },
+          { upsert: true, new: true }
+        );
+        ok++;
+        await new Promise(r => setTimeout(r, 60));
+      } catch (e: any) {
+        errors++;
+        if (errorSamples.length < 10) errorSamples.push({ id, error: e?.response?.status || e?.message });
+      }
+    }
+
+    return res.json({
+      message: 'Backfill completado',
+      tried: missingIds.length,
+      ok,
+      errors,
+      errorSamples,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("❌ Error en backfill-missing:", err);
+    return res.status(500).json({ error: "Error en backfill-missing: " + err.message });
+  }
+});
+
 // 🧠 Función extendida que agrega estrategias adicionales a la robusta
 async function robustSyncExtended() {
   const token = await getCurrentToken();
