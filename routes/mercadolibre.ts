@@ -1841,6 +1841,201 @@ router.get("/sync/force-robust", async (req: Request, res: Response) => {
   }
 });
 
+// 🆕 Endpoint extendido: combina todas las estrategias disponibles
+router.get("/sync/force-extended", async (req: Request, res: Response) => {
+  try {
+    console.log("🚀 Iniciando sincronización EXTENDIDA en background...");
+    robustSyncExtended().then(async (result) => {
+      console.log("✅ Sincronización EXTENDIDA completada en background");
+      console.log(`📊 Productos únicos encontrados: ${result.totalItems}`);
+      console.log(`📊 Estrategias ejecutadas: ${result.strategies.length}`);
+    }).catch((error) => {
+      console.error("❌ Error en sincronización EXTENDIDA:", error);
+    });
+    res.json({
+      message: "🔄 Sincronización EXTENDIDA iniciada en background. Se ejecutan todas las estrategias para capturar el máximo posible.",
+      status: "running",
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("❌ Error iniciando sincronización EXTENDIDA:", err);
+    res.status(500).json({ 
+      error: "Error iniciando sincronización EXTENDIDA: " + err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// 🧠 Función extendida que agrega estrategias adicionales a la robusta
+async function robustSyncExtended() {
+  const token = await getCurrentToken();
+  if (!token) throw new Error("No autenticado");
+
+  console.log(`🚀 Iniciando sincronización EXTENDIDA para user_id: ${token.user_id}`);
+
+  let allItems: string[] = [];
+  const strategies: Array<{ name: string; items: number; processed: number; errors: number }> = [];
+  let totalProcessed = 0;
+  let totalErrors = 0;
+
+  // 1) Paginación múltiple 25/50/100
+  for (const cfg of [{ l: 25, p: 60 }, { l: 50, p: 60 }, { l: 100, p: 40 }]) {
+    try {
+      const s = await paginateWithLimitRobust(token, cfg.l, cfg.p);
+      savePartial(s.items, `extended-paginate-${cfg.l}`);
+      allItems = allItems.concat(s.items);
+      totalProcessed += s.processed; totalErrors += s.errors;
+      strategies.push({ name: `Paginate ${cfg.l}`, items: s.items.length, processed: s.processed, errors: s.errors });
+      console.log(`📊 Paginate ${cfg.l}: ${s.items.length} únicos`);
+    } catch (e) { console.error(`❌ Error paginate ${cfg.l}:`, e); }
+  }
+
+  // 2) Por estados (active/paused/closed/under_review)
+  try {
+    const s = await syncByStatusRobust(token);
+    savePartial(s.items, "extended-status");
+    allItems = allItems.concat(s.items);
+    totalProcessed += s.processed; totalErrors += s.errors;
+    strategies.push({ name: "Status", items: s.items.length, processed: s.processed, errors: s.errors });
+  } catch (e) { console.error("❌ Error status:", e); }
+
+  // 3) Estado + fecha (últimos 90 días por día y 3–24 meses por mes)
+  try {
+    const s = await syncByStatusAndDateRobust(token);
+    savePartial(s.items, "extended-status-date");
+    allItems = allItems.concat(s.items);
+    totalProcessed += s.processed; totalErrors += s.errors || 0;
+    strategies.push({ name: "Status+Date", items: s.items.length, processed: s.processed, errors: s.errors || 0 });
+  } catch (e) { console.error("❌ Error status+date:", e); }
+
+  // 4) Activos por rangos de precio
+  try {
+    const s = await syncActiveByPriceRanges(token);
+    savePartial(s.items, "extended-price-ranges");
+    allItems = allItems.concat(s.items);
+    totalProcessed += s.processed; totalErrors += s.errors;
+    strategies.push({ name: "Active by Price", items: s.items.length, processed: s.processed, errors: s.errors });
+  } catch (e) { console.error("❌ Error price ranges:", e); }
+
+  // 5) Por categorías
+  try {
+    const s = await syncByCategoriesRobust(token);
+    savePartial(s.items, "extended-categories");
+    allItems = allItems.concat(s.items);
+    totalProcessed += s.processed; totalErrors += s.errors;
+    strategies.push({ name: "Categories", items: s.items.length, processed: s.processed, errors: s.errors });
+  } catch (e) { console.error("❌ Error categories:", e); }
+
+  // 6) Por ordenamiento (price_asc/price_desc)
+  try {
+    const s = await syncByOrderingRobust(token);
+    savePartial(s.items, "extended-ordering");
+    allItems = allItems.concat(s.items);
+    totalProcessed += s.processed; totalErrors += s.errors;
+    strategies.push({ name: "Ordering", items: s.items.length, processed: s.processed, errors: s.errors });
+  } catch (e) { console.error("❌ Error ordering:", e); }
+
+  // 7) Búsqueda pública por seller_id (sin autenticación)
+  try {
+    const s = await syncViaPublicSearch(token);
+    savePartial(s.items, "extended-public-search");
+    allItems = allItems.concat(s.items);
+    totalProcessed += s.processed; totalErrors += s.errors;
+    strategies.push({ name: "Public Search", items: s.items.length, processed: s.processed, errors: s.errors });
+  } catch (e) { console.error("❌ Error public search:", e); }
+
+  // Deduplicar y procesar
+  const uniqueItems = deduplicateItems(allItems);
+  savePartial(uniqueItems, "extended-final-merged");
+  console.log(`🎯 EXTENDED: únicos=${uniqueItems.length}, procesados=${totalProcessed}, errores=${totalErrors}`);
+
+  let processedCount = 0;
+  let errorCount = 0;
+  const processingErrors: string[] = [];
+  for (const itemId of uniqueItems) {
+    try {
+      const { data: itemDetail } = await axios.get(
+        `https://api.mercadolibre.com/items/${itemId}`,
+        { headers: { Authorization: `Bearer ${token.access_token}` } }
+      );
+      let description = "";
+      try {
+        const descResponse = await axios.get(
+          `https://api.mercadolibre.com/items/${itemId}/description`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        description = descResponse.data.plain_text || "";
+      } catch {}
+      let producto = await Producto.findOneAndUpdate(
+        { ml_id: itemDetail.id },
+        {
+          ml_id: itemDetail.id,
+          title: itemDetail.title,
+          price: itemDetail.price,
+          available_quantity: itemDetail.available_quantity,
+          status: itemDetail.status,
+          permalink: getCorrectPermalink(itemDetail),
+          images: itemDetail.pictures?.map((picture: any) => ({
+            id: picture.id,
+            url: picture.secure_url?.replace('-I.jpg', '-O.jpg') || picture.url,
+            max_size: picture.max_size
+          })) || [],
+          description,
+          sold_quantity: itemDetail.sold_quantity || 0,
+          warranty: itemDetail.warranty || "",
+          attributes: itemDetail.attributes || [],
+          tags: itemDetail.tags || [],
+          category_id: itemDetail.category_id || "",
+          condition: itemDetail.condition || "",
+          listing_type_id: itemDetail.listing_type_id || "",
+          shipping: itemDetail.shipping || {},
+          health: itemDetail.health || 0,
+          metrics: {
+            visits: itemDetail.visits || 0,
+            reviews: { rating_average: itemDetail.reviews?.rating_average || 0, total: itemDetail.reviews?.total || 0 }
+          },
+          date_created: itemDetail.date_created ? new Date(itemDetail.date_created) : new Date(),
+          last_updated: itemDetail.last_updated ? new Date(itemDetail.last_updated) : new Date()
+        },
+        { upsert: true, new: true }
+      );
+      if (itemDetail.variations?.length > 0 && producto) {
+        const varianteIds: string[] = [];
+        for (const variante of itemDetail.variations) {
+          if (!variante.id) continue;
+          const color = variante.attribute_combinations.find((a: any) => a.id === "COLOR")?.value_name || null;
+          const size = variante.attribute_combinations.find((a: any) => a.id === "SIZE")?.value_name || null;
+          const savedVariante = await Variante.findOneAndUpdate(
+            { id: variante.id.toString() },
+            {
+              id: variante.id.toString(),
+              product_id: producto._id,
+              color,
+              size,
+              stock: variante.available_quantity,
+              price: variante.price || itemDetail.price,
+              images: variante.picture_ids?.map((id: string) => ({ id, url: `https://http2.mlstatic.com/D_${id}-F.jpg`, high_quality: `https://http2.mlstatic.com/D_${id}-O.jpg` })) || [],
+              attribute_combinations: variante.attribute_combinations?.map((attr: any) => ({ id: attr.id, name: attr.name, value_id: attr.value_id, value_name: attr.value_name })) || []
+            },
+            { upsert: true, new: true }
+          );
+          if (savedVariante) varianteIds.push(savedVariante._id.toString());
+        }
+        producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
+        await producto.save();
+      }
+      processedCount++;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (error: any) {
+      processingErrors.push(`${itemId}: ${error.message}`);
+      errorCount++;
+    }
+  }
+
+  console.log(`🎉 EXTENDED COMPLETADO: ok=${processedCount}, errores=${errorCount}, únicos=${uniqueItems.length}`);
+  return { totalItems: uniqueItems.length, totalProcessed: processedCount, totalErrors: errorCount, strategies, items: uniqueItems, processingErrors };
+}
+
 // Función mejorada para sincronización robusta con múltiples estrategias
 async function robustSyncProductos() {
   const token = await getCurrentToken();
