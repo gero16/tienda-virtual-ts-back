@@ -1,13 +1,14 @@
 import express, { Router, Request, Response } from "express";
 import colors from "colors";
 import CuponModel from "../models/Cupon";
+import { authenticate, authorize } from "../middleware/auth";
 
 const router = Router();
 
 // =====================
 // Crear un nuevo cupón
 // =====================
-router.post("/crear", async (req: Request, res: Response) => {
+router.post("/crear", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { 
       codigo, 
@@ -240,7 +241,7 @@ router.post("/validar", async (req: Request, res: Response) => {
 // =====================
 // Aplicar un cupón (registrar uso)
 // =====================
-router.post("/aplicar", async (req: Request, res: Response) => {
+router.post("/aplicar", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { codigo, email_usuario } = req.body;
 
@@ -291,7 +292,7 @@ router.post("/aplicar", async (req: Request, res: Response) => {
 // =====================
 // Actualizar un cupón
 // =====================
-router.put("/actualizar/:id", async (req: Request, res: Response) => {
+router.put("/actualizar/:id", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const updateData = req.body;
@@ -333,7 +334,7 @@ router.put("/actualizar/:id", async (req: Request, res: Response) => {
 // =====================
 // Activar/Desactivar cupón
 // =====================
-router.patch("/toggle/:id", async (req: Request, res: Response) => {
+router.patch("/toggle/:id", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const cupon = await CuponModel.findById(id);
@@ -367,7 +368,7 @@ router.patch("/toggle/:id", async (req: Request, res: Response) => {
 // =====================
 // Eliminar un cupón
 // =====================
-router.delete("/eliminar/:id", async (req: Request, res: Response) => {
+router.delete("/eliminar/:id", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const cupon = await CuponModel.findByIdAndDelete(id);

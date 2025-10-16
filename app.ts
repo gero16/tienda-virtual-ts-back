@@ -15,6 +15,7 @@ import sitemap from './routes/sitemap'; // 🆕 Importar rutas de sitemap/SEO
 import checkoutPro from './routes/checkoutPro'; // 🆕 Checkout Pro para USD
 import webhook from './routes/webhook'; // 🆕 Webhook de MercadoPago
 import verificarUSD from './routes/verificarUSD'; // 🆕 Verificar soporte de USD
+import authRoutes from './routes/auth'; // 🆕 Rutas de autenticación
 
 const app : Express = express();
 const port = 3000;
@@ -55,6 +56,7 @@ mercadopago.configure({
 
 app.use('/api', routes);
 app.use('/ml', mercadolibre);
+app.use('/auth', authRoutes); // 🆕 Auth (login, crear admin)
 app.use('/api/clientes', clientes); // 🆕 Agregar rutas de clientes
 app.use('/api/descuentos', descuentos); // 🆕 Agregar rutas de descuentos
 app.use('/api/cupones', cupones); // 🆕 Agregar rutas de cupones
@@ -65,6 +67,28 @@ app.use('/api/verificar', verificarUSD); // 🆕 Verificar soporte de USD en cue
 app.get('/', (req: Request, res: Response) => {
   res.send('Ruta funcionando!');
 });
+
+// 🆕 Seeding opcional de admin al iniciar si variables de entorno están definidas
+import Usuario from './models/Usuario';
+const seedAdmin = async () => {
+  try {
+    const { ADMIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, SEED_ADMIN } = process.env;
+    if (SEED_ADMIN !== 'true') return;
+
+    const admins = await Usuario.countDocuments({ rol: 'admin' });
+    if (admins > 0) return;
+
+    if (!ADMIN_NAME || !ADMIN_EMAIL || !ADMIN_PASSWORD) {
+      console.log('⚠️ SEED_ADMIN=true pero faltan ADMIN_NAME, ADMIN_EMAIL o ADMIN_PASSWORD');
+      return;
+    }
+
+    await Usuario.create({ nombre: ADMIN_NAME, email: ADMIN_EMAIL.toLowerCase(), password: ADMIN_PASSWORD, rol: 'admin' });
+    console.log('✅ Admin inicial creado mediante seeding');
+  } catch (e) {
+    console.error('❌ Error en seeding de admin:', e);
+  }
+};
 
 
 const dbConnection = async () : Promise <void> => {
@@ -83,6 +107,9 @@ const conectarDB = async () : Promise <void> => {
 }
 
 conectarDB()
+
+// Ejecutar seeding de admin si corresponde
+seedAdmin();
 
 app.listen(port, () => {
   console.log(`Servidor Express corriendo en http://localhost:${port}`);

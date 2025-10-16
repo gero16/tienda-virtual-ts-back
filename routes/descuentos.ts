@@ -1,13 +1,14 @@
 import express, { Router, Request, Response } from "express";
 import colors from "colors";
 import ProductoModel from "../models/Producto";
+import { authenticate, authorize } from "../middleware/auth";
 
 const router = Router();
 
 // =====================
 // Aplicar descuento a productos específicos
 // =====================
-router.post("/aplicar", async (req: Request, res: Response) => {
+router.post("/aplicar", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { product_ids, porcentaje, fecha_inicio, fecha_fin } = req.body;
 
@@ -106,7 +107,7 @@ router.post("/aplicar", async (req: Request, res: Response) => {
 // =====================
 // Quitar descuento de productos específicos
 // =====================
-router.post("/quitar", async (req: Request, res: Response) => {
+router.post("/quitar", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { product_ids } = req.body;
 
@@ -268,7 +269,7 @@ router.get("/producto/:ml_id", async (req: Request, res: Response) => {
 // =====================
 // Actualizar porcentaje de descuento
 // =====================
-router.put("/actualizar", async (req: Request, res: Response) => {
+router.put("/actualizar", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { product_ids, porcentaje } = req.body;
 
