@@ -27,7 +27,10 @@ const corsOptions = {
     'https://mercado-libre-roan.vercel.app',
     'http://localhost:3000',
     'http://localhost:5173',
-    'http://localhost:3001'
+    'http://localhost:3001',
+    // Producción
+    'https://www.poppyshopuy.com',
+    'https://poppyshopuy.com'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
