@@ -1,5 +1,5 @@
 import express, { Router, Request, Response } from "express";
-import jwt from "jsonwebtoken";
+import jwt, { Secret, SignOptions } from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import Usuario from "../models/Usuario";
 import { authenticate, authorize } from "../middleware/auth";
@@ -7,9 +7,13 @@ import { authenticate, authorize } from "../middleware/auth";
 const router = Router();
 
 const signToken = (payload: { id: string; email: string; rol: string }) => {
-  const secret = process.env.JWT_SECRET as string;
-  const expiresIn = process.env.JWT_EXPIRES_IN || "7d";
-  return jwt.sign(payload, secret, { expiresIn });
+  const secretEnv = process.env.JWT_SECRET;
+  if (!secretEnv) {
+    throw new Error("JWT_SECRET no definido");
+  }
+  const secret: Secret = secretEnv as Secret;
+  const expiresInValue: SignOptions["expiresIn"] = (process.env.JWT_EXPIRES_IN as any) || "7d";
+  return jwt.sign(payload, secret, { expiresIn: expiresInValue } as SignOptions);
 };
 
 // POST /auth/login
