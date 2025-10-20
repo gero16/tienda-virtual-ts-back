@@ -16,6 +16,7 @@ import checkoutPro from './routes/checkoutPro'; // 🆕 Checkout Pro para USD
 import webhook from './routes/webhook'; // 🆕 Webhook de MercadoPago
 import verificarUSD from './routes/verificarUSD'; // 🆕 Verificar soporte de USD
 import authRoutes from './routes/auth'; // 🆕 Rutas de autenticación
+import eventos from './routes/eventos'; // 🆕 Rutas de eventos especiales
 
 const app : Express = express();
 const port = 3000;
@@ -63,6 +64,7 @@ app.use('/auth', authRoutes); // 🆕 Auth (login, crear admin)
 app.use('/api/clientes', clientes); // 🆕 Agregar rutas de clientes
 app.use('/api/descuentos', descuentos); // 🆕 Agregar rutas de descuentos
 app.use('/api/cupones', cupones); // 🆕 Agregar rutas de cupones
+app.use('/api/eventos', eventos); // 🆕 Agregar rutas de eventos especiales
 app.use('/api', sitemap); // 🆕 Agregar rutas de sitemap y robots.txt para SEO
 app.use('/api/checkout-pro', checkoutPro); // 🆕 Checkout Pro para cobrar en USD
 app.use('/webhook', webhook); // 🆕 Webhook para notificaciones de MercadoPago
