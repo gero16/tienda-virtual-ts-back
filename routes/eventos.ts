@@ -21,8 +21,12 @@ router.post("/", authenticate, authorize("admin"), async (req: Request, res: Res
 
 // Listar eventos
 router.get("/", async (_req: Request, res: Response) => {
-  const eventos = await Evento.find().sort({ createdAt: -1 });
-  return res.json({ success: true, eventos });
+  try {
+    const eventos = await Evento.find().sort({ createdAt: -1 });
+    return res.json({ success: true, eventos });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: "Error listando eventos", message: e.message });
+  }
 });
 
 // Listar eventos activos (y opcionalmente por fecha)
@@ -44,9 +48,13 @@ router.get("/activos", async (_req: Request, res: Response) => {
 
 // Obtener un evento
 router.get("/:slug", async (req: Request, res: Response) => {
-  const evento = await Evento.findOne({ slug: req.params.slug.toLowerCase() });
-  if (!evento) return res.status(404).json({ error: "Evento no encontrado" });
-  return res.json({ success: true, evento });
+  try {
+    const evento = await Evento.findOne({ slug: req.params.slug.toLowerCase() });
+    if (!evento) return res.status(404).json({ error: "Evento no encontrado" });
+    return res.json({ success: true, evento });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: "Error obteniendo evento", message: e.message });
+  }
 });
 
 // Actualizar evento
