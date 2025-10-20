@@ -8,6 +8,7 @@ export interface IEvento extends Document {
   theme?: string; // p.ej. 'halloween', 'blackfriday', etc.
   subtitle?: string; // subtítulo para banner
   discount_text?: string; // texto de descuento (ej: "Hasta 50% OFF")
+  discount_percentage?: number; // porcentaje para aplicar a productos del evento
   fecha_inicio?: Date;
   fecha_fin?: Date;
   productos_ml_ids: string[]; // Asociamos por ml_id para rapidez
@@ -23,6 +24,7 @@ const EventoSchema = new Schema<IEvento>({
   theme: { type: String, default: "" },
   subtitle: { type: String, default: "" },
   discount_text: { type: String, default: "" },
+  discount_percentage: { type: Number, default: 0 },
   fecha_inicio: { type: Date },
   fecha_fin: { type: Date },
   productos_ml_ids: { type: [String], default: [] },
