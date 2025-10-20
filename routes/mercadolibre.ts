@@ -3861,6 +3861,125 @@ router.get("/productos/duplicados/resumen", async (req: Request, res: Response) 
   }
 });
 
+// -------------------- DIAGNÓSTICO DE POSIBLES VARIANTES EN DUPLICADOS POR TÍTULO --------------------
+router.get("/productos/duplicados/title/diagnostico", async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(parseInt((req.query.limit as string) || "20", 10) || 20, 200);
+    const keyFilter = (req.query.key as string) || ""; // analizar un grupo específico si se pasa
+
+    // Cargar base mínima
+    const productosBase = await Producto.find({}, {
+      _id: 1,
+      ml_id: 1,
+      permalink: 1,
+      title: 1
+    }).lean();
+
+    const normalizeTitle = (v?: string) => (v ? v.trim().toLowerCase().replace(/\s+/g, ' ') : '');
+
+    // Agrupar por título normalizado
+    const groupsMap = new Map<string, { ids: any[]; ml_ids: string[]; titles: string[]; permalinks: string[] }>();
+    for (const p of productosBase) {
+      const k = normalizeTitle(p.title);
+      if (!k) continue;
+      if (!groupsMap.has(k)) groupsMap.set(k, { ids: [], ml_ids: [], titles: [], permalinks: [] });
+      const g = groupsMap.get(k)!;
+      g.ids.push(p._id);
+      if (p.ml_id) g.ml_ids.push(p.ml_id);
+      if (p.title) g.titles.push(p.title);
+      if (p.permalink) g.permalinks.push(p.permalink);
+    }
+
+    let groups = Array.from(groupsMap.entries())
+      .map(([key, val]) => ({ key, count: val.ids.length, ...val }))
+      .filter(g => g.count >= 2);
+
+    if (keyFilter) {
+      groups = groups.filter(g => g.key === keyFilter);
+    }
+
+    // Limitar cantidad de grupos a diagnosticar
+    groups = groups.sort((a, b) => b.count - a.count).slice(0, limit);
+
+    // Heurísticas de variaciones
+    const attributeNameRegex = /(color|tamaño|tamano|size|capacidad|memoria|almacenamiento|gb|pulgadas|inches)/i;
+
+    const diagnostics: any[] = [];
+    for (const group of groups) {
+      const docs = await Producto.find({ _id: { $in: group.ids } }, {
+        _id: 1,
+        ml_id: 1,
+        title: 1,
+        price: 1,
+        category_id: 1,
+        attributes: 1,
+        status: 1,
+        available_quantity: 1,
+        permalink: 1
+      }).lean();
+
+      const categorySet = new Set(docs.map(d => d.category_id || ''));
+      const allSameCategory = categorySet.size === 1 && categorySet.has('') === false;
+
+      // Mapear atributos por nombre
+      const attributeValuesByName: Record<string, Set<string>> = {};
+      for (const d of docs) {
+        const attrs = Array.isArray(d.attributes) ? d.attributes : [];
+        for (const a of attrs) {
+          const name = (a.name || a.id || '').toString();
+          const value = (a.value_name || a.value_id || '').toString();
+          if (!name || !value) continue;
+          if (!attributeValuesByName[name]) attributeValuesByName[name] = new Set<string>();
+          attributeValuesByName[name].add(value);
+        }
+      }
+
+      // Seleccionar atributos candidatos a variación
+      const candidateVariationAttrs = Object.keys(attributeValuesByName)
+        .filter(n => attributeNameRegex.test(n));
+
+      const variationSignals: Array<{ attribute: string; distinct_values: number }>
+        = candidateVariationAttrs
+          .map(n => ({ attribute: n, distinct_values: attributeValuesByName[n].size }))
+          .filter(x => x.distinct_values >= 2);
+
+      // Señales de precio
+      const prices = docs.map(d => Number(d.price || 0)).filter(n => !isNaN(n));
+      const minPrice = prices.length ? Math.min(...prices) : 0;
+      const maxPrice = prices.length ? Math.max(...prices) : 0;
+      const priceRatio = (minPrice > 0) ? (maxPrice / minPrice) : 0;
+      const smallPriceSpread = priceRatio > 0 && priceRatio <= 1.8; // dif. de precio moderada sugiere variación
+
+      const likelyVariations = allSameCategory && variationSignals.length > 0;
+
+      diagnostics.push({
+        key: group.key,
+        count: group.count,
+        ids: group.ids,
+        ml_ids: group.ml_ids,
+        permalinks: group.permalinks,
+        category_id: Array.from(categorySet)[0] || null,
+        all_same_category: allSameCategory,
+        candidate_variation_attributes: variationSignals,
+        prices: { min: minPrice, max: maxPrice, ratio: Number(priceRatio.toFixed(2)), small_spread: smallPriceSpread },
+        likely_variations: likelyVariations,
+        recommendation: likelyVariations
+          ? 'Revisar para unificar como variantes (mismo título y categoría; difieren en atributos)'
+          : 'Posibles duplicados reales: revisar y consolidar/eliminar los que no correspondan'
+      });
+    }
+
+    return res.json({
+      success: true,
+      analyzed_groups: diagnostics.length,
+      diagnostics
+    });
+  } catch (err: any) {
+    console.error("❌ Error en diagnóstico de variaciones:", err.message);
+    return res.status(500).json({ error: "Error en diagnóstico de variaciones", details: err.message });
+  }
+});
+
 // Endpoint para productos tipo dropshipping con más de 14 días
 router.get("/productos/tipo/dropshipping", async (req: Request, res: Response) => {
   try {
