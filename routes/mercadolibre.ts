@@ -3674,6 +3674,113 @@ router.get("/productos/estadisticas", async (req: Request, res: Response) => {
   }
 });
 
+// -------------------- DETECTAR PRODUCTOS DUPLICADOS --------------------
+router.get("/productos/duplicados", async (req: Request, res: Response) => {
+  try {
+    // field: ml_id | mlu | permalink | title
+    const rawField = (req.query.field as string) || "ml_id";
+    const field = rawField.toLowerCase() === "mlu" ? "ml_id" : rawField.toLowerCase();
+    const minCount = parseInt((req.query.minCount as string) || (req.query.min_count as string) || "2", 10) || 2;
+    const limit = Math.min(parseInt((req.query.limit as string) || "200", 10) || 200, 1000);
+    const includeDocs = ((req.query.includeDocs as string) || (req.query.include_docs as string) || "false").toLowerCase() === "true";
+
+    // Validar campo soportado
+    const allowedFields = new Set(["ml_id", "permalink", "title"]);
+    if (!allowedFields.has(field)) {
+      return res.status(400).json({
+        error: "Campo no soportado",
+        allowed_fields: Array.from(allowedFields),
+      });
+    }
+
+    // Filtro base: que el campo exista y no esté vacío
+    const matchStage: any = {};
+    matchStage[field] = { $nin: [null, ""] };
+
+    // Normalización por campo para agrupar correctamente
+    let addFieldsStage: any = {};
+    if (field === "ml_id") {
+      // Normalizar ml_id: quitar guiones y mayúsculas (MLU693... == MLU-693...)
+      addFieldsStage = {
+        groupKey: {
+          $toUpper: {
+            $replaceAll: { input: "$ml_id", find: "-", replacement: "" }
+          }
+        }
+      };
+    } else if (field === "permalink") {
+      // Normalizar permalink: minúsculas y sin query string
+      addFieldsStage = {
+        groupKey: {
+          $toLower: {
+            $arrayElemAt: [ { $split: [ "$permalink", "?" ] }, 0 ]
+          }
+        }
+      };
+    } else if (field === "title") {
+      // Normalizar title: trim + minúsculas
+      addFieldsStage = {
+        groupKey: {
+          $toLower: { $trim: { input: "$title" } }
+        }
+      };
+    }
+
+    const pipeline: any[] = [
+      { $match: matchStage },
+      { $addFields: addFieldsStage },
+      {
+        $group: {
+          _id: "$groupKey",
+          count: { $sum: 1 },
+          ids: { $push: "$_id" },
+          ml_ids: { $push: "$ml_id" },
+          titles: { $push: "$title" },
+          permalinks: { $push: "$permalink" }
+        }
+      },
+      { $match: { count: { $gte: minCount } } },
+      { $sort: { count: -1 } },
+      { $limit: limit },
+      {
+        $project: includeDocs ? {
+          _id: 0,
+          key: "$_id",
+          count: 1,
+          ids: 1,
+          ml_ids: 1,
+          titles: { $slice: ["$titles", 5] },
+          permalinks: { $slice: ["$permalinks", 5] },
+          field: { $literal: field }
+        } : {
+          _id: 0,
+          key: "$_id",
+          count: 1,
+          sample: {
+            ml_ids: { $slice: ["$ml_ids", 5] },
+            titles: { $slice: ["$titles", 5] },
+            permalinks: { $slice: ["$permalinks", 3] }
+          },
+          field: { $literal: field }
+        }
+      }
+    ];
+
+    const results = await Producto.aggregate(pipeline);
+
+    return res.json({
+      success: true,
+      field,
+      minCount,
+      totalGroups: results.length,
+      results
+    });
+  } catch (err: any) {
+    console.error("❌ Error detectando duplicados:", err.message);
+    return res.status(500).json({ error: "Error detectando duplicados", details: err.message });
+  }
+});
+
 // Endpoint para productos tipo dropshipping con más de 14 días
 router.get("/productos/tipo/dropshipping", async (req: Request, res: Response) => {
   try {

@@ -130,7 +130,7 @@ router.get("/:slug/productos", async (req: Request, res: Response) => {
       return res.json({ success: true, productos: [] });
     }
     const productos = await Producto.find({ ml_id: { $in: evento.productos_ml_ids } })
-      .select("ml_id title price images available_quantity status category_id permalink");
+      .select("ml_id title price images available_quantity status category_id permalink descuento");
     return res.json({ success: true, productos });
   } catch (e: any) {
     return res.status(500).json({ error: "Error obteniendo productos", message: e.message });
