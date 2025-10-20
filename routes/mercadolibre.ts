@@ -3445,21 +3445,30 @@ router.get("/sync/debug", async (req: Request, res: Response) => {
 
 
 // Función para detectar y limpiar productos eliminados de MercadoLibre
-async function detectAndCleanupDeletedProducts() {
+async function detectAndCleanupDeletedProducts(confirm: boolean = false) {
   try {
     console.log("🧹 Iniciando limpieza de productos eliminados...");
     
     const token = await getCurrentToken();
     if (!token) throw new Error("No autenticado");
 
-    // Obtener productos de MercadoLibre
-    const itemsResponse = await axios.get(
-      `https://api.mercadolibre.com/users/${token.user_id}/items/search`,
-      { headers: { Authorization: `Bearer ${token.access_token}` } }
-    );
-    
-    const mlProductIds = itemsResponse.data.results || [];
-    console.log(`📊 Productos en MercadoLibre: ${mlProductIds.length}`);
+    // Obtener TODOS los productos de MercadoLibre (paginando para evitar límite de 50)
+    const mlProductIds: string[] = [];
+    let offset = 0;
+    const limit = 50;
+    let page = 0;
+    while (true) {
+      page += 1;
+      const url = `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`;
+      const { data } = await axios.get(url, { headers: { Authorization: `Bearer ${token.access_token}` } });
+      const results: string[] = data?.results || [];
+      if (!results.length) break;
+      mlProductIds.push(...results);
+      offset += limit;
+      // pequeña pausa para no golpear la API
+      await new Promise(r => setTimeout(r, 150));
+    }
+    console.log(`📊 Productos en MercadoLibre (paginado): ${mlProductIds.length}`);
 
     // Obtener productos de la base de datos
     const dbProducts = await Producto.find({});
@@ -3489,14 +3498,20 @@ async function detectAndCleanupDeletedProducts() {
       _id: p._id
     }));
 
-    // Eliminar productos de la base de datos
+    // Si no está confirmado, devolver preview y abortar borrado
+    if (!confirm) {
+      console.log("⚠️ Modo PREVIEW: no se eliminarán registros sin confirm=true");
+      return {
+        message: "Preview de limpieza (no se eliminaron registros)",
+        would_delete_count: deletedProductsInfo.length,
+        would_delete_products: deletedProductsInfo
+      };
+    }
+
+    // Eliminar productos de la base de datos (confirmado)
     const deleteResult = await Producto.deleteMany({ ml_id: { $in: deletedProductIds } });
-    
-    // También eliminar variantes asociadas
     const deletedProductObjectIds = deletedProducts.map(p => p._id);
-    const variantesResult = await Variante.deleteMany({ 
-      product_id: { $in: deletedProductObjectIds } 
-    });
+    const variantesResult = await Variante.deleteMany({ product_id: { $in: deletedProductObjectIds } });
 
     console.log(`✅ Limpieza completada:`);
     console.log(`   • Productos eliminados: ${deleteResult.deletedCount}`);
@@ -3519,8 +3534,8 @@ async function detectAndCleanupDeletedProducts() {
 router.post("/sync/cleanup", async (req: Request, res: Response) => {
   try {
     console.log("🧹 Iniciando limpieza manual de productos eliminados...");
-    
-    const result = await detectAndCleanupDeletedProducts();
+    const confirm = ((req.query.confirm as string) || (req.body?.confirm as string) || "false").toLowerCase() === "true";
+    const result = await detectAndCleanupDeletedProducts(confirm);
     
     res.json({
       success: true,
@@ -4083,7 +4098,13 @@ router.get("/sync/cleanup/preview", async (req: Request, res: Response) => {
 cron.schedule("0 */3 * * *", async () => {
   try {
     console.log("⏰ Ejecutando sincronización automática con Mercado Libre... ⚡️");
-    await forceUpdateProductos();
+    // Usar versión robusta para captar todo el inventario
+    try {
+      await robustSyncProductos();
+    } catch (e) {
+      console.warn("⚠️ Fallback a forceUpdateProductos tras error en robustSyncProductos");
+      await forceUpdateProductos();
+    }
   } catch (err: any) {
     console.error("❌ Error en sincronización automática:", err.message);
   }
