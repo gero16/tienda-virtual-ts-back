@@ -25,6 +25,23 @@ router.get("/", async (_req: Request, res: Response) => {
   return res.json({ success: true, eventos });
 });
 
+// Listar eventos activos (y opcionalmente por fecha)
+router.get("/activos", async (_req: Request, res: Response) => {
+  const now = new Date()
+  const eventos = await Evento.find({
+    activo: true,
+    $or: [
+      { fecha_inicio: { $exists: false } },
+      { fecha_inicio: { $lte: now } }
+    ],
+    $or: [
+      { fecha_fin: { $exists: false } },
+      { fecha_fin: { $gte: now } }
+    ]
+  }).sort({ createdAt: -1 })
+  return res.json({ success: true, eventos })
+})
+
 // Obtener un evento
 router.get("/:slug", async (req: Request, res: Response) => {
   const evento = await Evento.findOne({ slug: req.params.slug.toLowerCase() });
