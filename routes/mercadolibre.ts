@@ -3781,6 +3781,86 @@ router.get("/productos/duplicados", async (req: Request, res: Response) => {
   }
 });
 
+// -------------------- RESUMEN COMPLETO DE DUPLICADOS (BD completa) --------------------
+router.get("/productos/duplicados/resumen", async (req: Request, res: Response) => {
+  try {
+    // Cargar todos los productos con los campos relevantes
+    const productos = await Producto.find({}, {
+      _id: 1,
+      ml_id: 1,
+      permalink: 1,
+      title: 1
+    }).lean();
+
+    // Utilidades inline (mismas reglas de normalización del script)
+    const normalizeMlu = (v?: string) => (v ? v.toUpperCase().replace(/-/g, '').trim() : '');
+    const normalizePermalink = (v?: string) => (v ? (v.split('?')[0] || '').trim().toLowerCase() : '');
+    const normalizeTitle = (v?: string) => (v ? v.trim().toLowerCase().replace(/\s+/g, ' ') : '');
+
+    const buildGroups = (field: 'ml_id' | 'permalink' | 'title') => {
+      const groups = new Map<string, { count: number; ids: any[]; ml_ids: string[]; titles: string[]; permalinks: string[] }>();
+      for (const p of productos) {
+        let key = '';
+        if (field === 'ml_id') key = normalizeMlu(p.ml_id);
+        if (field === 'permalink') key = normalizePermalink(p.permalink);
+        if (field === 'title') key = normalizeTitle(p.title);
+        if (!key) continue;
+        if (!groups.has(key)) {
+          groups.set(key, { count: 0, ids: [], ml_ids: [], titles: [], permalinks: [] });
+        }
+        const g = groups.get(key)!;
+        g.count += 1;
+        g.ids.push(p._id);
+        if (p.ml_id) g.ml_ids.push(p.ml_id);
+        if (p.title) g.titles.push(p.title);
+        if (p.permalink) g.permalinks.push(p.permalink);
+      }
+      return Array.from(groups.entries())
+        .filter(([, v]) => v.count >= 2)
+        .map(([key, v]) => ({ key, ...v }))
+        .sort((a, b) => b.count - a.count);
+    };
+
+    const dupMlu = buildGroups('ml_id');
+    const dupPermalink = buildGroups('permalink');
+    const dupTitle = buildGroups('title');
+
+    const resumen = {
+      total_productos: productos.length,
+      duplicados: {
+        ml_id: {
+          grupos: dupMlu.length,
+          total_items_en_grupos: dupMlu.reduce((acc, g) => acc + g.count, 0),
+          top5: dupMlu.slice(0, 5)
+        },
+        permalink: {
+          grupos: dupPermalink.length,
+          total_items_en_grupos: dupPermalink.reduce((acc, g) => acc + g.count, 0),
+          top5: dupPermalink.slice(0, 5)
+        },
+        title: {
+          grupos: dupTitle.length,
+          total_items_en_grupos: dupTitle.reduce((acc, g) => acc + g.count, 0),
+          top5: dupTitle.slice(0, 5)
+        }
+      }
+    };
+
+    return res.json({
+      success: true,
+      resumen,
+      detalles: {
+        ml_id: dupMlu,
+        permalink: dupPermalink,
+        title: dupTitle
+      }
+    });
+  } catch (err: any) {
+    console.error("❌ Error generando resumen de duplicados:", err.message);
+    return res.status(500).json({ error: "Error generando resumen de duplicados", details: err.message });
+  }
+});
+
 // Endpoint para productos tipo dropshipping con más de 14 días
 router.get("/productos/tipo/dropshipping", async (req: Request, res: Response) => {
   try {
