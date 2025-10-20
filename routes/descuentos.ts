@@ -457,4 +457,62 @@ router.post("/reparar", async (req: Request, res: Response) => {
   }
 });
 
+// =====================
+// 🔧 REPARAR descuentos por lista de ml_id (idempotente)
+// =====================
+router.post("/reparar-ids", authenticate, authorize("admin"), async (req: Request, res: Response) => {
+  try {
+    const { product_ids } = req.body as { product_ids: string[] };
+    if (!Array.isArray(product_ids) || product_ids.length === 0) {
+      return res.status(400).json({ error: "Se requiere product_ids: string[]" })
+    }
+
+    const productos = await ProductoModel.find({ ml_id: { $in: product_ids } });
+    const resultados: any[] = [];
+    let reparados = 0;
+    let yaCorrectos = 0;
+
+    for (const producto of productos) {
+      try {
+        const descuento = producto.descuento;
+        if (!descuento || !descuento.activo) {
+          resultados.push({ ml_id: producto.ml_id, reparado: false, mensaje: 'Sin descuento activo' });
+          continue;
+        }
+        const precioActual = producto.price;
+        const precioOriginal = descuento.precio_original || precioActual;
+        const porcentaje = descuento.porcentaje;
+        const precioEsperado = Math.round(precioOriginal * (1 - porcentaje / 100) * 100) / 100;
+        const diferencia = Math.abs(precioOriginal - precioActual);
+        if (diferencia < 0.01) {
+          const precioOriginalCorrecto = Math.round((precioActual / (1 - porcentaje / 100)) * 100) / 100;
+          const precioConDescuentoCorrecto = Math.round(precioOriginalCorrecto * (1 - porcentaje / 100) * 100) / 100;
+          if (producto.descuento) {
+            producto.descuento.precio_original = precioOriginalCorrecto;
+            producto.price = precioConDescuentoCorrecto;
+            await producto.save();
+          }
+          reparados++;
+          resultados.push({
+            ml_id: producto.ml_id,
+            reparado: true,
+            precio_original_nuevo: precioOriginalCorrecto,
+            precio_con_descuento: precioConDescuentoCorrecto,
+            porcentaje
+          });
+        } else {
+          yaCorrectos++;
+          resultados.push({ ml_id: producto.ml_id, reparado: false, mensaje: 'Descuento ya estaba correcto' });
+        }
+      } catch (err: any) {
+        resultados.push({ ml_id: producto.ml_id, reparado: false, error: err.message });
+      }
+    }
+
+    return res.json({ success: true, reparados, yaCorrectos, resultados });
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Error reparando descuentos por ids', message: error.message })
+  }
+});
+
 export default router;
