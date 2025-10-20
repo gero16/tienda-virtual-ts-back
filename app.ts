@@ -22,23 +22,32 @@ const app : Express = express();
 const port = 3000;
 
 // ⚠️ IMPORTANTE: CORS debe ir ANTES de bodyParser
-// Configuración CORS mejorada para permitir el frontend de Vercel
+// Configuración CORS: permitir dominios conocidos y localhost/127.0.0.1 en dev
+const ALLOWED_ORIGINS = new Set([
+  'https://mercado-libre-roan.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:3001',
+  'http://127.0.0.1:5173',
+  // Producción
+  'https://www.poppyshopuy.com',
+  'https://poppyshopuy.com'
+]);
+
 const corsOptions = {
-  origin: [
-    'https://mercado-libre-roan.vercel.app',
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:3001',
-    // Producción
-    'https://www.poppyshopuy.com',
-    'https://poppyshopuy.com'
-  ],
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Permitir herramientas sin Origin (curl/Postman) y orígenes definidos en whitelist
+    if (!origin || ALLOWED_ORIGINS.has(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, false);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   credentials: true,
-  optionsSuccessStatus: 200,
+  optionsSuccessStatus: 204,
   preflightContinue: false
-};
+} as any;
 
 // Aplicar CORS globalmente PRIMERO
 app.use(cors(corsOptions));

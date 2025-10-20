@@ -32,17 +32,24 @@ router.get("/", async (_req: Request, res: Response) => {
 // Listar eventos activos (y opcionalmente por fecha)
 router.get("/activos", async (_req: Request, res: Response) => {
   const now = new Date()
-  const eventos = await Evento.find({
+  const filter: any = {
     activo: true,
-    $or: [
-      { fecha_inicio: { $exists: false } },
-      { fecha_inicio: { $lte: now } }
-    ],
-    $or: [
-      { fecha_fin: { $exists: false } },
-      { fecha_fin: { $gte: now } }
+    $and: [
+      {
+        $or: [
+          { fecha_inicio: { $exists: false } },
+          { fecha_inicio: { $lte: now } }
+        ]
+      },
+      {
+        $or: [
+          { fecha_fin: { $exists: false } },
+          { fecha_fin: { $gte: now } }
+        ]
+      }
     ]
-  }).sort({ createdAt: -1 })
+  }
+  const eventos = await Evento.find(filter).sort({ createdAt: -1 })
   return res.json({ success: true, eventos })
 })
 
