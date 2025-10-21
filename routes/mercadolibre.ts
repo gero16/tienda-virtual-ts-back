@@ -1012,30 +1012,106 @@ router.get("/sync/census", async (req: Request, res: Response) => {
 });
 
 // 🔎 Reporte de duplicados (catálogo y GTIN/EAN)
-router.get("/diagnostics/duplicates", async (_req: Request, res: Response) => {
+router.get("/diagnostics/duplicates", async (req: Request, res: Response) => {
   try {
-    // Por catálogo (agrupado por catalog_product_id)
-    const byCatalog = await Producto.aggregate([
-      { $match: { catalog_product_id: { $ne: null } } },
-      { $group: { _id: "$catalog_product_id", count: { $sum: 1 }, ids: { $addToSet: "$ml_id" } } },
-      { $match: { count: { $gt: 1 } } },
-      { $sort: { count: -1 } }
-    ]);
+    const { limit, summary, includeProducts, type, fields } = req.query as Record<string, string>;
+    const limitNum = Math.max(1, Math.min(parseInt(limit || "50") || 50, 500));
+    const wantSummary = String(summary).toLowerCase() === "true";
+    const wantProducts = String(includeProducts).toLowerCase() === "true";
+    const which: Array<'catalog'|'gtin'> = type === 'catalog' ? ['catalog'] : type === 'gtin' ? ['gtin'] : ['catalog','gtin'];
+    const projection: any = {};
+    if (fields) {
+      for (const f of fields.split(",").map(s => s.trim()).filter(Boolean)) {
+        projection[f] = 1;
+      }
+    }
 
-    // Por GTIN/EAN/UPC (usando attributes)
-    const byGtin = await Producto.aggregate([
-      { $unwind: "$attributes" },
-      { $match: { "attributes.id": { $in: ["GTIN", "EAN", "GTIN14", "UPC"] } } },
-      { $group: { _id: "$attributes.value_name", count: { $sum: 1 }, ids: { $addToSet: "$ml_id" } } },
-      { $match: { _id: { $ne: null }, count: { $gt: 1 } } },
-      { $sort: { count: -1 } }
-    ]);
+    // Por catálogo
+    const byCatalog = which.includes('catalog')
+      ? await Producto.aggregate([
+          { $match: { catalog_product_id: { $ne: null } } },
+          { $group: { _id: "$catalog_product_id", count: { $sum: 1 }, ids: { $addToSet: "$ml_id" } } },
+          { $match: { count: { $gt: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: limitNum }
+        ])
+      : [];
+
+    // Por GTIN/EAN/UPC
+    const byGtin = which.includes('gtin')
+      ? await Producto.aggregate([
+          { $unwind: "$attributes" },
+          { $match: { "attributes.id": { $in: ["GTIN", "EAN", "GTIN14", "UPC"] } } },
+          { $group: { _id: "$attributes.value_name", count: { $sum: 1 }, ids: { $addToSet: "$ml_id" } } },
+          { $match: { _id: { $ne: null }, count: { $gt: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: limitNum }
+        ])
+      : [];
+
+    // Summary rápido
+    if (wantSummary) {
+      const sumExcess = (arr: any[]) => arr.reduce((acc, g) => acc + Math.max(0, (Number(g.count)||0) - 1), 0);
+      return res.json({
+        summary: {
+          groups_catalog: byCatalog.length,
+          groups_gtin: byGtin.length,
+          excess_catalog: sumExcess(byCatalog),
+          excess_gtin: sumExcess(byGtin),
+          sample_catalog: byCatalog.slice(0, 5),
+          sample_gtin: byGtin.slice(0, 5)
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Incluir metadata de productos opcional
+    let products: any[] = [];
+    if (wantProducts) {
+      const allIds = new Set<string>();
+      for (const g of byCatalog) (g.ids || []).forEach((id: string) => allIds.add(id));
+      for (const g of byGtin) (g.ids || []).forEach((id: string) => allIds.add(id));
+
+      const defaultFields = {
+        ml_id: 1,
+        title: 1,
+        status: 1,
+        sold_quantity: 1,
+        health: 1,
+        listing_type_id: 1,
+        permalink: 1,
+        price: 1,
+        available_quantity: 1
+      } as any;
+      const proj = Object.keys(projection).length ? projection : defaultFields;
+      products = await Producto.find({ ml_id: { $in: Array.from(allIds) } }, proj).lean();
+
+      // Sugerencia de canónica por grupo (si tenemos productos)
+      const productById = new Map(products.map(p => [p.ml_id, p]));
+      const chooseCanonical = (ids: string[]) => {
+        const ranked = ids
+          .map(id => productById.get(id))
+          .filter(Boolean)
+          .sort((a: any, b: any) => {
+            const score = (x: any) => (
+              (x.status === 'active' ? 1000 : x.status === 'paused' ? 100 : 0) +
+              (Number(x.sold_quantity)||0) * 5 +
+              (Number(x.health)||0)
+            );
+            return score(b) - score(a);
+          });
+        return ranked[0]?.ml_id || ids[0];
+      };
+      for (const g of byCatalog) g.suggested_canonical = chooseCanonical(g.ids || []);
+      for (const g of byGtin) g.suggested_canonical = chooseCanonical(g.ids || []);
+    }
 
     return res.json({
       duplicates: {
         by_catalog_product_id: byCatalog,
         by_gtin: byGtin
       },
+      products,
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
