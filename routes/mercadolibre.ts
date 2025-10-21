@@ -971,46 +971,74 @@ router.get("/productos", async (req: Request, res: Response) => {
 // 🧹 Consolidación de duplicados por catalog_product_id dejando 1 canónica
 router.post("/maintenance/consolidate-duplicates", async (req: Request, res: Response) => {
   try {
-    const { dry_run } = req.query;
-    // 1) Agrupar por catalog_product_id con count>1
-    const groups = await Producto.aggregate([
-      { $match: { catalog_product_id: { $ne: null } } },
-      { $group: { _id: "$catalog_product_id", ids: { $push: "$ml_id" } } },
-      { $project: { _id: 1, ids: 1, count: { $size: "$ids" } } },
-      { $match: { count: { $gt: 1 } } }
-    ]);
+    const { dry_run, type } = req.query as any;
+    const useType = (type || 'catalog').toString().toLowerCase(); // 'catalog' | 'gtin' | 'both'
 
-    const actions: Array<{ catalog_product_id: string; canonical: string; archived: string[] }> = [];
+    const buildScore = (p: any) => (
+      (p.status === 'active' ? 1_000_000 : p.status === 'paused' ? 100_000 : 0) +
+      (Number(p.sold_quantity) || 0) * 1_000 +
+      (Number(p.health) || 0) * 10 -
+      (Number(p.price) || 0)
+    );
 
-    for (const g of groups) {
-      const products = await Producto.find({ ml_id: { $in: g.ids } }).lean();
-      // Elegir canónica: activa > más vendida > mayor health > menor precio
-      const score = (p: any) => (
-        (p.status === 'active' ? 1_000_000 : p.status === 'paused' ? 100_000 : 0) +
-        (Number(p.sold_quantity) || 0) * 1_000 +
-        (Number(p.health) || 0) * 10 -
-        (Number(p.price) || 0)
-      );
-      const sorted = products.sort((a: any, b: any) => score(b) - score(a));
-      const canonical = sorted[0]?.ml_id;
-      const toArchive = sorted.slice(1).map((p: any) => p.ml_id);
+    const allActions: any[] = [];
+    let totalGroups = 0;
 
-      if (!canonical || toArchive.length === 0) continue;
-
-      actions.push({ catalog_product_id: g._id, canonical, archived: toArchive });
-
-      if (!dry_run || String(dry_run).toLowerCase() !== 'true') {
-        await Producto.updateMany(
-          { ml_id: { $in: toArchive } },
-          { $set: { archivado: true, duplicate_of_ml_id: canonical } }
-        );
+    async function consolidateByCatalog() {
+      const groups = await Producto.aggregate([
+        { $match: { catalog_product_id: { $ne: null } } },
+        { $group: { _id: "$catalog_product_id", ids: { $push: "$ml_id" } } },
+        { $project: { _id: 1, ids: 1, count: { $size: "$ids" } } },
+        { $match: { count: { $gt: 1 } } }
+      ]);
+      totalGroups += groups.length;
+      for (const g of groups) {
+        const products = await Producto.find({ ml_id: { $in: g.ids } }).lean();
+        const sorted = products.sort((a: any, b: any) => buildScore(b) - buildScore(a));
+        const canonical = sorted[0]?.ml_id;
+        const toArchive = sorted.slice(1).map((p: any) => p.ml_id);
+        if (!canonical || toArchive.length === 0) continue;
+        allActions.push({ strategy: 'catalog', group_id: g._id, canonical, archived: toArchive });
+        if (!dry_run || String(dry_run).toLowerCase() !== 'true') {
+          await Producto.updateMany({ ml_id: { $in: toArchive } }, { $set: { archivado: true, duplicate_of_ml_id: canonical } });
+        }
       }
+    }
+
+    async function consolidateByGTIN() {
+      // Agrupar por valor GTIN/EAN/GTIN14/UPC
+      const groups = await Producto.aggregate([
+        { $unwind: "$attributes" },
+        { $match: { "attributes.id": { $in: ["GTIN", "EAN", "GTIN14", "UPC"] }, "attributes.value_name": { $ne: null } } },
+        { $group: { _id: "$attributes.value_name", ids: { $addToSet: "$ml_id" }, count: { $sum: 1 } } },
+        { $match: { count: { $gt: 1 } } }
+      ]);
+      totalGroups += groups.length;
+      for (const g of groups) {
+        const products = await Producto.find({ ml_id: { $in: g.ids } }).lean();
+        const sorted = products.sort((a: any, b: any) => buildScore(b) - buildScore(a));
+        const canonical = sorted[0]?.ml_id;
+        const toArchive = sorted.slice(1).map((p: any) => p.ml_id);
+        if (!canonical || toArchive.length === 0) continue;
+        allActions.push({ strategy: 'gtin', group_id: g._id, canonical, archived: toArchive });
+        if (!dry_run || String(dry_run).toLowerCase() !== 'true') {
+          await Producto.updateMany({ ml_id: { $in: toArchive } }, { $set: { archivado: true, duplicate_of_ml_id: canonical } });
+        }
+      }
+    }
+
+    if (useType === 'catalog' || useType === 'both') {
+      await consolidateByCatalog();
+    }
+    if (useType === 'gtin' || useType === 'both') {
+      await consolidateByGTIN();
     }
 
     return res.json({
       dry_run: String(dry_run).toLowerCase() === 'true',
-      groups_processed: groups.length,
-      actions
+      type: useType,
+      groups_processed: totalGroups,
+      actions: allActions
     });
   } catch (err: any) {
     return res.status(500).json({ error: "Error consolidando duplicados: " + err.message });
