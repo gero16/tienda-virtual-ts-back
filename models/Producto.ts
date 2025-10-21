@@ -105,6 +105,9 @@ export interface IProducto extends Document {
   
   // 🆕 CAMPO PARA PRODUCTOS DESTACADOS (selección manual)
   destacado?: boolean;
+  // Archivado por consolidación de duplicados
+  archivado?: boolean;
+  duplicate_of_ml_id?: string | null;
 }
 
 const ProductoSchema = new Schema<IProducto>({
@@ -213,6 +216,10 @@ const ProductoSchema = new Schema<IProducto>({
   
   // 🆕 CAMPO PARA PRODUCTOS DESTACADOS
   destacado: { type: Boolean, default: false }
+  ,
+  // Archivado por consolidación
+  archivado: { type: Boolean, default: false },
+  duplicate_of_ml_id: { type: String, default: null }
 });
 
 export default model<IProducto>("Producto", ProductoSchema);

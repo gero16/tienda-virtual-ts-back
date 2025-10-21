@@ -936,11 +936,11 @@ router.get("/productos", async (req: Request, res: Response) => {
       // Calcular skip basado en página si se proporciona
       const actualSkip = page ? (pageNum - 1) * limitNum : skipNum;
       
-      // Obtener total de productos para metadata
-      const total = await Producto.countDocuments();
+      // Obtener total de productos para metadata (excluye archivados)
+      const total = await Producto.countDocuments({ archivado: { $ne: true } });
       
       // Obtener productos con paginación (más rápido)
-      const productos = await Producto.find()
+      const productos = await Producto.find({ archivado: { $ne: true } })
         .populate("variantes")
         .limit(limitNum)
         .skip(actualSkip)
@@ -961,10 +961,59 @@ router.get("/productos", async (req: Request, res: Response) => {
     }
     
     // Si no se especifica limit, devolver todos (comportamiento original para compatibilidad)
-    const productos = await Producto.find().populate("variantes");
+    const productos = await Producto.find({ archivado: { $ne: true } }).populate("variantes");
     res.json(productos);
   } catch (err: any) {
     res.status(500).send("❌ Error al obtener productos: " + err.message);
+  }
+});
+
+// 🧹 Consolidación de duplicados por catalog_product_id dejando 1 canónica
+router.post("/maintenance/consolidate-duplicates", async (req: Request, res: Response) => {
+  try {
+    const { dry_run } = req.query;
+    // 1) Agrupar por catalog_product_id con count>1
+    const groups = await Producto.aggregate([
+      { $match: { catalog_product_id: { $ne: null } } },
+      { $group: { _id: "$catalog_product_id", ids: { $push: "$ml_id" } } },
+      { $project: { _id: 1, ids: 1, count: { $size: "$ids" } } },
+      { $match: { count: { $gt: 1 } } }
+    ]);
+
+    const actions: Array<{ catalog_product_id: string; canonical: string; archived: string[] }> = [];
+
+    for (const g of groups) {
+      const products = await Producto.find({ ml_id: { $in: g.ids } }).lean();
+      // Elegir canónica: activa > más vendida > mayor health > menor precio
+      const score = (p: any) => (
+        (p.status === 'active' ? 1_000_000 : p.status === 'paused' ? 100_000 : 0) +
+        (Number(p.sold_quantity) || 0) * 1_000 +
+        (Number(p.health) || 0) * 10 -
+        (Number(p.price) || 0)
+      );
+      const sorted = products.sort((a: any, b: any) => score(b) - score(a));
+      const canonical = sorted[0]?.ml_id;
+      const toArchive = sorted.slice(1).map((p: any) => p.ml_id);
+
+      if (!canonical || toArchive.length === 0) continue;
+
+      actions.push({ catalog_product_id: g._id, canonical, archived: toArchive });
+
+      if (!dry_run || String(dry_run).toLowerCase() !== 'true') {
+        await Producto.updateMany(
+          { ml_id: { $in: toArchive } },
+          { $set: { archivado: true, duplicate_of_ml_id: canonical } }
+        );
+      }
+    }
+
+    return res.json({
+      dry_run: String(dry_run).toLowerCase() === 'true',
+      groups_processed: groups.length,
+      actions
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error consolidando duplicados: " + err.message });
   }
 });
 
@@ -1082,7 +1131,10 @@ router.get("/diagnostics/duplicates", async (req: Request, res: Response) => {
         permalink: 1,
         price: 1,
         available_quantity: 1,
-        images: 1
+        images: 1,
+        tags: 1,
+        es_catalogo: 1,
+        catalog_product_id: 1
       } as any;
       const proj = Object.keys(projection).length ? projection : defaultFields;
       products = await Producto.find({ ml_id: { $in: Array.from(allIds) } }, proj).lean();
@@ -4414,6 +4466,46 @@ export async function updateStockInMercadoLibre(itemId: string, newStock: number
   } catch (error: any) {
     console.error(`❌ Error al actualizar stock de ${itemId} en MercadoLibre:`, error.response?.data || error.message);
     throw error;
+  }
+}
+
+// =====================
+// Propagar stock a todas las publicaciones del mismo catálogo/GTIN
+// =====================
+export async function propagateStockToGroup(mlId: string, newStock: number, accessToken: string) {
+  // Buscar el producto base
+  const base = await Producto.findOne({ ml_id: mlId }).lean();
+  if (!base) return;
+
+  // Resolver grupo: preferir catalog_product_id; fallback por GTIN en attributes
+  let groupQuery: any = {};
+  if (base.catalog_product_id) {
+    groupQuery = { catalog_product_id: base.catalog_product_id };
+  } else {
+    const gtinValues = (base.attributes || [])
+      .filter((a: any) => ['GTIN','EAN','GTIN14','UPC'].includes((a?.id || '').toUpperCase()))
+      .map((a: any) => a.value_name)
+      .filter(Boolean);
+    if (gtinValues.length > 0) {
+      groupQuery = { attributes: { $elemMatch: { id: { $in: ['GTIN','EAN','GTIN14','UPC'] }, value_name: { $in: gtinValues } } } };
+    } else {
+      return; // sin identificador de grupo
+    }
+  }
+
+  const groupProducts = await Producto.find(groupQuery).lean();
+  const idsToUpdate = groupProducts
+    .map((p: any) => p.ml_id)
+    .filter((id: string) => !!id);
+
+  for (const id of idsToUpdate) {
+    try {
+      await updateStockInMercadoLibre(id, newStock, accessToken);
+      await Producto.updateOne({ ml_id: id }, { $set: { available_quantity: newStock } });
+    } catch (e) {
+      console.warn(`⚠️ No se pudo propagar stock a ${id}:`, (e as any)?.message);
+    }
+    await new Promise(r => setTimeout(r, 150));
   }
 }
 

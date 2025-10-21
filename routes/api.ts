@@ -4,7 +4,7 @@ import colors from "colors";
 import mongoose from "mongoose"; // 🆕 Para transacciones atómicas
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
-import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre } from "./mercadolibre"; // 🆕 Importar funciones de ML
+import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre, propagateStockToGroup } from "./mercadolibre"; // 🆕 Importar funciones de ML
 import { ClienteService } from "../services/clienteService"; // 🆕 Importar servicio de clientes
 import Variante from "../models/Variante"; // 🆕 Importar el modelo de Variante
 import CuponModel from "../models/Cupon"; // 🆕 Importar modelo de Cupón
@@ -1029,6 +1029,8 @@ router.post("/process_payment", async (req: Request, res: Response) => {
               console.log(colors.blue(`   📊 Stock actual: ${currentStock} → Nuevo stock: ${newStock} (restando ${item.quantity})`));
             
             await updateStockInMercadoLibre(item.product_id, newStock, token.access_token);
+            // 🆕 Propagar al grupo (catálogo/GTIN)
+            await propagateStockToGroup(item.product_id, newStock, token.access_token);
             console.log(colors.green(`   ✅ Stock actualizado para ${item.product_name}`));
             } catch (itemError) {
               console.error(colors.red(`❌ Error procesando item ${item.product_name}:`), itemError);
