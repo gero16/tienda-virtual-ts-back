@@ -29,6 +29,23 @@ function deduplicateItems(items: any[]) {
   return Array.from(map.values());
 }
 
+// Extraer campos de identidad de producto de ML
+function extractIdentityFields(item: any) {
+  try {
+    const tags: string[] = Array.isArray(item?.tags) ? item.tags : [];
+    const esCatalogo = tags.includes('catalog_listing');
+    const sellerSku: string = item?.seller_custom_field || '';
+    const attrs = Array.isArray(item?.attributes) ? item.attributes : [];
+    const catalogFromAttr = attrs.find((a: any) =>
+      (a?.id || '').toString().toUpperCase() === 'CATALOG_PRODUCT_ID'
+    )?.value_id;
+    const catalogId: string | null = item?.catalog_product_id || catalogFromAttr || null;
+    return { catalog_product_id: catalogId, es_catalogo: esCatalogo, seller_sku: sellerSku };
+  } catch {
+    return { catalog_product_id: null, es_catalogo: false, seller_sku: '' };
+  }
+}
+
 // 🔧 Validar y corregir permalink para asegurar que apunte al producto correcto
 function getCorrectPermalink(itemDetail: any): string {
   const mlId = itemDetail.id; // Ej: "MLU693479306" o "MLU-693479306"
@@ -250,6 +267,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       : undefined;
     
     // --- Actualizar/Crear Producto ---
+    const identity = extractIdentityFields(item);
     let producto = await Producto.findOneAndUpdate(
     { ml_id: item.id },
     {
@@ -261,6 +279,9 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       available_quantity: item.available_quantity,
       status: item.status,
       permalink: getCorrectPermalink(item), // ✅ AGREGADO: URL validada de la publicación
+        catalog_product_id: identity.catalog_product_id,
+        es_catalogo: identity.es_catalogo,
+        seller_sku: identity.seller_sku,
       // Imágenes en mejor calidad
       images: item.pictures?.map((picture: any) => ({
         id: picture.id,
@@ -740,6 +761,7 @@ async function forceUpdateProductos() {
       }
 
       // --- Producto ---
+      const identity = extractIdentityFields(itemDetail);
       let producto = await Producto.findOneAndUpdate(
         { ml_id: itemDetail.id },
         {
@@ -749,6 +771,9 @@ async function forceUpdateProductos() {
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
           permalink: getCorrectPermalink(itemDetail), // URL validada de la publicación
+          catalog_product_id: identity.catalog_product_id,
+          es_catalogo: identity.es_catalogo,
+          seller_sku: identity.seller_sku,
           // Imágenes en mejor calidad
           images: itemDetail.pictures?.map((picture: any) => ({
             id: picture.id,
@@ -940,6 +965,81 @@ router.get("/productos", async (req: Request, res: Response) => {
     res.json(productos);
   } catch (err: any) {
     res.status(500).send("❌ Error al obtener productos: " + err.message);
+  }
+});
+
+// 📊 Censo por estado: cuenta por estado y totales ML vs DB
+router.get("/sync/census", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) return res.status(401).json({ error: "No autenticado" });
+
+    // Estados ampliados
+    const states = [
+      'active','paused','closed','under_review','inactive','not_yet_active',
+      'payment_required','stopped','deleted','suspended','blocked'
+    ];
+
+    const counts: Record<string, number> = {};
+    for (const st of states) {
+      try {
+        const resp = await axios.get(
+          `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${st}&limit=1`,
+          { headers: { Authorization: `Bearer ${token.access_token}` } }
+        );
+        counts[st] = Number(resp.data?.paging?.total || 0);
+      } catch {
+        counts[st] = 0;
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    const dbCount = await Producto.countDocuments();
+    const dbByStatus = await Producto.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]);
+    const mlTotal = Object.values(counts).reduce((a, b) => a + (typeof b === 'number' ? b : 0), 0);
+
+    return res.json({
+      ml_counts_by_status: counts,
+      ml_total_estimated: mlTotal,
+      db_total: dbCount,
+      db_by_status: dbByStatus,
+      gap_estimated: Math.max(0, mlTotal - dbCount),
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error en census: " + err.message });
+  }
+});
+
+// 🔎 Reporte de duplicados (catálogo y GTIN/EAN)
+router.get("/diagnostics/duplicates", async (_req: Request, res: Response) => {
+  try {
+    // Por catálogo (agrupado por catalog_product_id)
+    const byCatalog = await Producto.aggregate([
+      { $match: { catalog_product_id: { $ne: null } } },
+      { $group: { _id: "$catalog_product_id", count: { $sum: 1 }, ids: { $addToSet: "$ml_id" } } },
+      { $match: { count: { $gt: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    // Por GTIN/EAN/UPC (usando attributes)
+    const byGtin = await Producto.aggregate([
+      { $unwind: "$attributes" },
+      { $match: { "attributes.id": { $in: ["GTIN", "EAN", "GTIN14", "UPC"] } } },
+      { $group: { _id: "$attributes.value_name", count: { $sum: 1 }, ids: { $addToSet: "$ml_id" } } },
+      { $match: { _id: { $ne: null }, count: { $gt: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    return res.json({
+      duplicates: {
+        by_catalog_product_id: byCatalog,
+        by_gtin: byGtin
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error en duplicates: " + err.message });
   }
 });
 
@@ -1960,6 +2060,7 @@ router.post("/sync/backfill-missing", async (req: Request, res: Response) => {
         );
 
         // Guardar mínimo en DB
+        const identity = extractIdentityFields(itemDetail);
         await Producto.findOneAndUpdate(
           { ml_id: itemDetail.id },
           {
@@ -1969,6 +2070,9 @@ router.post("/sync/backfill-missing", async (req: Request, res: Response) => {
             available_quantity: itemDetail.available_quantity,
             status: itemDetail.status,
             permalink: getCorrectPermalink(itemDetail),
+            catalog_product_id: identity.catalog_product_id,
+            es_catalogo: identity.es_catalogo,
+            seller_sku: identity.seller_sku,
             images: itemDetail.pictures?.map((p: any) => ({ id: p.id, url: p.secure_url?.replace('-I.jpg', '-O.jpg') || p.url, max_size: p.max_size })) || [],
             category_id: itemDetail.category_id || "",
           },
@@ -2065,6 +2169,7 @@ router.post("/sync/backfill-missing-extended", async (req: Request, res: Respons
           `https://api.mercadolibre.com/items/${id}`,
           { headers: { Authorization: `Bearer ${token.access_token}` } }
         );
+        const identity = extractIdentityFields(itemDetail);
         await Producto.findOneAndUpdate(
           { ml_id: itemDetail.id },
           {
@@ -2074,6 +2179,9 @@ router.post("/sync/backfill-missing-extended", async (req: Request, res: Respons
             available_quantity: itemDetail.available_quantity,
             status: itemDetail.status,
             permalink: getCorrectPermalink(itemDetail),
+            catalog_product_id: identity.catalog_product_id,
+            es_catalogo: identity.es_catalogo,
+            seller_sku: identity.seller_sku,
             images: itemDetail.pictures?.map((p: any) => ({ id: p.id, url: p.secure_url?.replace('-I.jpg', '-O.jpg') || p.url, max_size: p.max_size })) || [],
             category_id: itemDetail.category_id || "",
           },
@@ -2391,6 +2499,7 @@ async function robustSyncProductos() {
       }
 
       // --- Producto ---
+      const identity = extractIdentityFields(itemDetail);
       let producto = await Producto.findOneAndUpdate(
         { ml_id: itemDetail.id },
         {
@@ -2400,6 +2509,9 @@ async function robustSyncProductos() {
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
           permalink: getCorrectPermalink(itemDetail), // URL validada de la publicación
+          catalog_product_id: identity.catalog_product_id,
+          es_catalogo: identity.es_catalogo,
+          seller_sku: identity.seller_sku,
           // Imágenes en mejor calidad
           images: itemDetail.pictures?.map((picture: any) => ({
             id: picture.id,

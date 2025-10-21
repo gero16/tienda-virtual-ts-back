@@ -8,6 +8,10 @@ export interface IProducto extends Document {
   available_quantity: number;
   status: string;
   permalink?: string; // URL de la publicación en MercadoLibre
+  // Identidad de producto ML
+  catalog_product_id?: string | null;
+  es_catalogo?: boolean;
+  seller_sku?: string;
   images: Array<{
     id: string;
     url: string;
@@ -110,6 +114,10 @@ const ProductoSchema = new Schema<IProducto>({
   available_quantity: { type: Number, required: true },
   status: { type: String, required: true },
   permalink: { type: String, default: "" }, // URL de la publicación en MercadoLibre
+  // Identidad de producto ML
+  catalog_product_id: { type: String, default: null },
+  es_catalogo: { type: Boolean, default: false },
+  seller_sku: { type: String, default: "" },
   images: [{
     id: String,
     url: String,
