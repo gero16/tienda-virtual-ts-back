@@ -2013,7 +2013,9 @@ router.get("/sync/diagnose-gap-extended", async (req: Request, res: Response) =>
     const s7 = await syncByOrderingRobust(token);
     const s8 = await syncViaPublicSearch(token);
     allItems = allItems.concat(s1.items, s2.items, s3.items, s4.items, s5.items, s6.items, s7.items, s8.items);
-    const mlIdSet = new Set<string>(deduplicateItems(allItems));
+    const mlIdSet = new Set<string>(
+      deduplicateItems(allItems).map((it: any) => (typeof it === 'string' ? it : it?.id)).filter(Boolean)
+    );
 
     const dbProducts = await Producto.find({}, 'ml_id').lean();
     const dbIdSet = new Set<string>((dbProducts || []).map((p: any) => p.ml_id));
@@ -2047,7 +2049,9 @@ router.post("/sync/backfill-missing-extended", async (req: Request, res: Respons
     const s7 = await syncByOrderingRobust(token);
     const s8 = await syncViaPublicSearch(token);
     allItems = allItems.concat(s1.items, s2.items, s3.items, s4.items, s5.items, s6.items, s7.items, s8.items);
-    const mlIdSet = new Set<string>(deduplicateItems(allItems));
+    const mlIdSet = new Set<string>(
+      deduplicateItems(allItems).map((it: any) => (typeof it === 'string' ? it : it?.id)).filter(Boolean)
+    );
 
     const dbProducts = await Producto.find({}, 'ml_id').lean();
     const dbIdSet = new Set<string>((dbProducts || []).map((p: any) => p.ml_id));
