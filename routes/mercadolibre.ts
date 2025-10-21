@@ -3498,6 +3498,32 @@ async function detectAndCleanupDeletedProducts(confirm: boolean = false) {
     }
     console.log(`📊 Productos en MercadoLibre (paginado): ${mlProductIds.length}`);
 
+    // Fallback final: si no logramos recolectar IDs (403 o 0 resultados), validar existencia por cada ml_id en DB
+    if (mlProductIds.length === 0) {
+      console.warn("⚠️ No se obtuvieron IDs desde ML. Activando verificación individual por ml_id (fallback)");
+      const dbAll = await Producto.find({}, { ml_id: 1 }).lean();
+      const existingIds: string[] = [];
+      for (const doc of dbAll) {
+        const id = doc.ml_id;
+        if (!id) continue;
+        try {
+          await axios.get(`https://api.mercadolibre.com/items/${id}`, {
+            headers: { Authorization: `Bearer ${token.access_token}` }
+          });
+          existingIds.push(id);
+          await new Promise(r => setTimeout(r, 120)); // throttling
+        } catch (e: any) {
+          const status = e?.response?.status;
+          // 404 confirma que no existe → lo dejaremos fuera de existingIds
+          if (status !== 404 && status !== 400 && status !== 401 && status !== 403) {
+            console.warn(`⚠️ Error verificando ${id}:`, e?.response?.data || e?.message);
+          }
+        }
+      }
+      mlProductIds.push(...existingIds);
+      console.log(`📊 Verificación individual completada. IDs existentes: ${mlProductIds.length}`);
+    }
+
     // Obtener productos de la base de datos
     const dbProducts = await Producto.find({});
     console.log(`📊 Productos en base de datos: ${dbProducts.length}`);
