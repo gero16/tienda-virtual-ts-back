@@ -3454,19 +3454,47 @@ async function detectAndCleanupDeletedProducts(confirm: boolean = false) {
 
     // Obtener TODOS los productos de MercadoLibre (paginando para evitar límite de 50)
     const mlProductIds: string[] = [];
-    let offset = 0;
-    const limit = 50;
-    let page = 0;
-    while (true) {
-      page += 1;
-      const url = `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`;
-      const { data } = await axios.get(url, { headers: { Authorization: `Bearer ${token.access_token}` } });
-      const results: string[] = data?.results || [];
-      if (!results.length) break;
-      mlProductIds.push(...results);
-      offset += limit;
-      // pequeña pausa para no golpear la API
-      await new Promise(r => setTimeout(r, 150));
+    const fetchAllIdsViaAuth = async () => {
+      let offset = 0;
+      const limit = 50;
+      while (true) {
+        const url = `https://api.mercadolibre.com/users/${token.user_id}/items/search?offset=${offset}&limit=${limit}`;
+        const { data } = await axios.get(url, { headers: { Authorization: `Bearer ${token.access_token}` } });
+        const results: string[] = data?.results || [];
+        if (!results.length) break;
+        mlProductIds.push(...results);
+        offset += limit;
+        await new Promise(r => setTimeout(r, 150));
+      }
+    };
+
+    const fetchAllIdsViaPublic = async () => {
+      let offset = 0;
+      const limit = 50;
+      while (true) {
+        const url = `https://api.mercadolibre.com/sites/MLU/search?seller_id=${token.user_id}&offset=${offset}&limit=${limit}`;
+        const { data } = await axios.get(url);
+        const results = Array.isArray(data?.results) ? data.results : [];
+        const ids = results.map((r: any) => r.id).filter(Boolean);
+        if (!ids.length) break;
+        mlProductIds.push(...ids);
+        offset += limit;
+        await new Promise(r => setTimeout(r, 150));
+      }
+    };
+
+    try {
+      await fetchAllIdsViaAuth();
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const details = e?.response?.data || e?.message;
+      console.warn(`⚠️ Auth items/search falló (${status}). Detalles:`, details);
+      // Fallback a búsqueda pública si hay error típico de autenticación/parámetros
+      if (status === 400 || status === 401 || status === 403) {
+        await fetchAllIdsViaPublic();
+      } else {
+        throw e;
+      }
     }
     console.log(`📊 Productos en MercadoLibre (paginado): ${mlProductIds.length}`);
 
@@ -3525,8 +3553,12 @@ async function detectAndCleanupDeletedProducts(confirm: boolean = false) {
     };
 
   } catch (error: any) {
-    console.error("❌ Error en limpieza de productos:", error.message);
-    throw error;
+    console.error("❌ Error en limpieza de productos:", error?.response?.data || error.message);
+    // Propagar información más rica para el cliente
+    const status = error?.response?.status;
+    const data = error?.response?.data;
+    const err = new Error(status ? `ML API ${status}: ${JSON.stringify(data)}` : error.message);
+    throw err;
   }
 }
 
