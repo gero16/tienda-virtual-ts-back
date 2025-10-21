@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden";
 import CuponModel from "../models/Cupon";
-import { getCurrentToken, updateStockInMercadoLibre } from "./mercadolibre";
+import { getCurrentToken, updateStockInMercadoLibre, propagateStockToGroup } from "./mercadolibre";
 
 const router = Router();
 
@@ -130,8 +130,9 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
                   nuevoStockML, 
                   token.access_token
                 );
-                
-                console.log(colors.green(`      ✅ MercadoLibre - ${item.title}: Stock actualizado a ${nuevoStockML}`));
+                // 🆕 Propagar al grupo (catálogo/GTIN)
+                await propagateStockToGroup(producto.ml_id, nuevoStockML, token.access_token);
+                console.log(colors.green(`      ✅ MercadoLibre - ${item.title}: Stock propagado a grupo con ${nuevoStockML}`));
               } catch (mlError: any) {
                 console.log(colors.red(`      ❌ Error actualizando en ML para ${item.title}: ${mlError.message}`));
                 // No hacer rollback de la transacción, el stock en BD ya se actualizó correctamente
