@@ -1081,7 +1081,8 @@ router.get("/diagnostics/duplicates", async (req: Request, res: Response) => {
         listing_type_id: 1,
         permalink: 1,
         price: 1,
-        available_quantity: 1
+        available_quantity: 1,
+        images: 1
       } as any;
       const proj = Object.keys(projection).length ? projection : defaultFields;
       products = await Producto.find({ ml_id: { $in: Array.from(allIds) } }, proj).lean();
