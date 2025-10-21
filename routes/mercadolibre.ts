@@ -936,11 +936,15 @@ router.get("/productos", async (req: Request, res: Response) => {
       // Calcular skip basado en página si se proporciona
       const actualSkip = page ? (pageNum - 1) * limitNum : skipNum;
       
-      // Obtener total de productos para metadata (excluye archivados)
-      const total = await Producto.countDocuments({ archivado: { $ne: true } });
+      // Obtener total de productos para metadata (excluye archivados y duplicados apuntados)
+      const baseFilter = { 
+        archivado: { $ne: true },
+        $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ]
+      } as any;
+      const total = await Producto.countDocuments(baseFilter);
       
       // Obtener productos con paginación (más rápido)
-      const productos = await Producto.find({ archivado: { $ne: true } })
+      const productos = await Producto.find(baseFilter)
         .populate("variantes")
         .limit(limitNum)
         .skip(actualSkip)
@@ -960,8 +964,11 @@ router.get("/productos", async (req: Request, res: Response) => {
       });
     }
     
-    // Si no se especifica limit, devolver todos (comportamiento original para compatibilidad)
-    const productos = await Producto.find({ archivado: { $ne: true } }).populate("variantes");
+    // Si no se especifica limit, devolver todos (excluye archivados y duplicados apuntados)
+    const productos = await Producto.find({ 
+      archivado: { $ne: true },
+      $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ]
+    }).populate("variantes");
     res.json(productos);
   } catch (err: any) {
     res.status(500).send("❌ Error al obtener productos: " + err.message);
@@ -4727,8 +4734,17 @@ router.get("/debug/producto/:ml_id", async (req: Request, res: Response) => {
       { headers: { Authorization: `Bearer ${token.access_token}` } }
     );
 
+    // 🆕 Traer también el documento en BD para ver archivado/duplicate
+    const doc = await Producto.findOne({ ml_id }).lean();
+
     res.json({
       ml_id: ml_id,
+      bd: doc ? {
+        archivado: !!doc.archivado,
+        duplicate_of_ml_id: doc.duplicate_of_ml_id || null,
+        es_catalogo: !!doc.es_catalogo,
+        catalog_product_id: doc.catalog_product_id || null
+      } : null,
       campos_relevantes: {
         available_quantity: item.available_quantity,
         shipping: item.shipping,
