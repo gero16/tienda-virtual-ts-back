@@ -3491,9 +3491,17 @@ async function detectAndCleanupDeletedProducts(confirm: boolean = false) {
       console.warn(`⚠️ Auth items/search falló (${status}). Detalles:`, details);
       // Fallback a búsqueda pública si hay error típico de autenticación/parámetros
       if (status === 400 || status === 401 || status === 403) {
-        await fetchAllIdsViaPublic();
+        try {
+          await fetchAllIdsViaPublic();
+        } catch (pubErr: any) {
+          const pubStatus = pubErr?.response?.status;
+          const pubDetails = pubErr?.response?.data || pubErr?.message;
+          console.warn(`⚠️ Búsqueda pública falló (${pubStatus}). Detalles:`, pubDetails);
+          // No relanzar aquí: permitimos continuar para usar el fallback por item
+        }
       } else {
-        throw e;
+        // Si es otro error no relacionado, continuamos para intentar fallback por item
+        console.warn(`⚠️ Error no esperado en items/search:`, details);
       }
     }
     console.log(`📊 Productos en MercadoLibre (paginado): ${mlProductIds.length}`);
