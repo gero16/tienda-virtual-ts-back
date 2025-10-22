@@ -61,8 +61,14 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
 
     // Obtener información completa del pago
     console.log(colors.yellow(`   📋 Consultando pago ${paymentId}...`));
-    
-    const payment = await mercadopago.payment.findById(paymentId);
+
+    const paymentIdNum = typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId;
+    if (Number.isNaN(paymentIdNum)) {
+      console.log(colors.red("   ❌ paymentId no es numérico"));
+      return;
+    }
+
+    const payment = await mercadopago.payment.findById(paymentIdNum);
     const paymentData = payment.body;
 
     console.log(colors.cyan(`   💳 Estado del pago: ${paymentData.status}`));
