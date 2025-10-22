@@ -57,6 +57,8 @@ app.options('*', cors(corsOptions));
 
 // LUEGO bodyParser
 app.use(bodyParser.json())
+// Soportar notificaciones x-www-form-urlencoded de MercadoPago
+app.use(bodyParser.urlencoded({ extended: true }))
 
 import mercadopago from 'mercadopago';
 
