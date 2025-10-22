@@ -1292,6 +1292,65 @@ router.get("/productos/featured", async (req: Request, res: Response) => {
   }
 });
 
+// Endpoint ligero para categorías de portada con imagen representativa
+router.get("/home/categories", async (req: Request, res: Response) => {
+  try {
+    const kind = ((req.query.kind as string) || 'main').toLowerCase();
+
+    const mainGroups = [
+      { id: 'electronica', name: 'Electrónica', icon: '📱', description: 'Tecnología y dispositivos', mlCategories: [
+        'MLU163646','MLU163764','MLU163765','MLU163771','MLU168248','MLU3697'
+      ]},
+      { id: 'gaming', name: 'Gaming', icon: '🎮', description: 'Consolas y juegos', mlCategories: [
+        'MLU6344','MLU443628','MLU448172','MLU443741','MLU10858'
+      ]},
+      { id: 'hogar', name: 'Hogar', icon: '🏠', description: 'Decoración y muebles', mlCategories: [
+        'MLU12201','MLU7969','MLU40398','MLU205198','MLU43687'
+      ]},
+      { id: 'deportes', name: 'Deportes', icon: '🏋️', description: 'Ropa y equipos deportivos', mlCategories: [
+        'MLU165701','MLU165785','MLU413593'
+      ]}
+    ];
+
+    const secondaryGroups = [
+      { id: 'cocina', name: 'Cocina', icon: '🍳', description: 'Electrodomésticos y utensilios', mlCategories: [
+        'MLU442710','MLU196263','MLU416585','MLU414038','MLU442747','MLU442751','MLU455144','MLU74887','MLU74925','MLU412348'
+      ]},
+      { id: 'bebes-ninos', name: 'Bebés y Niños', icon: '👶', description: 'Todo para los más pequeños', mlCategories: [
+        'MLU178390','MLU443005','MLU412585','MLU187852','MLU443022','MLU443133','MLU1889','MLU40629','MLU457852','MLU429242'
+      ]},
+      { id: 'accesorios', name: 'Accesorios', icon: '🎒', description: 'Mochilas y complementos', mlCategories: [
+        'MLU190994','MLU442981','MLU187975','MLU26538','MLU158838','MLU434789'
+      ]},
+      { id: 'drones-foto', name: 'Drones y Fotografía', icon: '🚁', description: 'Tecnología audiovisual', mlCategories: [
+        'MLU178089','MLU413447','MLU413635','MLU430406','MLU413444','MLU414123','MLU1042'
+      ]}
+    ];
+
+    const groups = kind === 'secondary' ? secondaryGroups : mainGroups;
+
+    // Consultas en paralelo, eligiendo un producto representativo por grupo
+    const results = await Promise.all(groups.map(async (g) => {
+      const p = await Producto.findOne({
+        category_id: { $in: g.mlCategories },
+        status: { $ne: 'paused' },
+        $or: [ { 'images.0': { $exists: true } }, { main_image: { $exists: true, $ne: null } } ]
+      })
+      .select('images main_image sold_quantity health')
+      .sort({ sold_quantity: -1, health: -1 })
+      .lean();
+
+      const image = (p?.images && p.images[0]?.url) || (p as any)?.main_image || '/img/portada4.jpg';
+      return { id: g.id, name: g.name, icon: g.icon, description: g.description, image };
+    }));
+
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    return res.json({ kind, categories: results });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error al obtener categorías: ' + err.message });
+  }
+});
+
 // 🆕 Endpoint para marcar/desmarcar producto como destacado
 router.put("/productos/:id/destacado", async (req: Request, res: Response) => {
   try {
