@@ -1400,12 +1400,41 @@ router.put("/productos/:id/destacado", async (req: Request, res: Response) => {
 router.get("/categories/distinct", async (req: Request, res: Response) => {
   try {
     const onlyActive = (req.query.onlyActive as string | undefined) !== 'false';
-    const match: any = { archivado: { $ne: true } };
-    if (onlyActive) match.status = { $ne: 'paused' };
+    const requireImage = (req.query.requireImage as string | undefined) !== 'false';
+    const onlyInStock = (req.query.onlyInStock as string | undefined) === 'true';
+
+    const andClauses: any[] = [];
+    andClauses.push({ archivado: { $ne: true } });
+    // Excluir registros marcados como duplicados de otra canónica
+    andClauses.push({ $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ] });
+    if (onlyActive) andClauses.push({ status: { $ne: 'paused' } });
+    if (requireImage) andClauses.push({ $or: [ { 'images.0.url': { $exists: true } }, { main_image: { $exists: true, $ne: null } } ] });
+    if (onlyInStock) andClauses.push({ available_quantity: { $gt: 0 } });
+
+    const match: any = andClauses.length ? { $and: andClauses } : {};
 
     const results = await Producto.aggregate([
       { $match: match },
-      { $group: { _id: "$category_id", count: { $sum: 1 } } },
+      // Normalizar clave de agrupación por catálogo si existe, si no por ml_id
+      { $addFields: {
+          status_rank: {
+            $switch: {
+              branches: [
+                { case: { $eq: ["$status", "active"] }, then: 2 },
+                { case: { $eq: ["$status", "paused"] }, then: 1 },
+              ],
+              default: 0
+            }
+          },
+          groupKey: { $ifNull: ["$catalog_product_id", "$ml_id"] }
+        }
+      },
+      // Ordenar para elegir canónica por grupo (activos primero, luego ventas, health, y precio más bajo)
+      { $sort: { status_rank: -1, sold_quantity: -1, health: -1, price: 1 } },
+      // Elegir un documento representativo por catálogo (o ml_id)
+      { $group: { _id: "$groupKey", doc: { $first: "$$ROOT" } } },
+      // Contar por categoría del documento representativo
+      { $group: { _id: "$doc.category_id", count: { $sum: 1 } } },
       { $sort: { count: -1 } }
     ]).exec();
 
@@ -4521,6 +4550,130 @@ router.get("/sync/cleanup/preview", async (req: Request, res: Response) => {
   }
 
 
+});
+
+// -------------------- STOCK MANUAL --------------------
+// Consultar stock actual (ML y DB)
+router.get("/stock/:ml_id", async (req: Request, res: Response) => {
+  try {
+    const mlId = (req.params.ml_id || "").toString();
+    if (!mlId) {
+      return res.status(400).json({ error: "Parámetro ml_id es requerido" });
+    }
+
+    const token = await getCurrentToken();
+    if (!token) {
+      return res.status(401).json({ error: "No autenticado en Mercado Libre" });
+    }
+
+    // Stock en Mercado Libre
+    const mlStock = await getCurrentStockFromMercadoLibre(mlId, token.access_token);
+
+    // Stock en DB local
+    const productoDb = await Producto.findOne({ ml_id: mlId }).lean();
+    const dbStock = productoDb?.available_quantity ?? null;
+
+    return res.json({
+      success: true,
+      ml_id: mlId,
+      stock_ml: mlStock,
+      stock_db: dbStock,
+      producto: productoDb ? { _id: productoDb._id, title: productoDb.title } : null,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error consultando stock", details: err.message });
+  }
+});
+
+// Fijar stock absoluto
+router.post("/stock/set", async (req: Request, res: Response) => {
+  try {
+    const { ml_id, new_stock, propagate = false, update_db = true } = req.body || {};
+
+    if (!ml_id || typeof new_stock !== "number" || Number.isNaN(new_stock)) {
+      return res.status(400).json({ error: "ml_id y new_stock (number) son requeridos" });
+    }
+
+    const token = await getCurrentToken();
+    if (!token) {
+      return res.status(401).json({ error: "No autenticado en Mercado Libre" });
+    }
+
+    const safeStock = Math.max(0, Math.floor(new_stock));
+    const mlResponse = await updateStockInMercadoLibre(ml_id, safeStock, token.access_token);
+
+    if (update_db) {
+      await Producto.updateOne({ ml_id }, { $set: { available_quantity: safeStock } });
+    }
+
+    if (propagate) {
+      try {
+        await propagateStockToGroup(ml_id, safeStock, token.access_token);
+      } catch (e: any) {
+        // Continuar aunque la propagación falle
+      }
+    }
+
+    return res.json({
+      success: true,
+      action: "set",
+      ml_id,
+      new_stock: safeStock,
+      propagated: !!propagate,
+      db_updated: !!update_db,
+      mercadolibre_response: mlResponse
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error fijando stock", details: err.message });
+  }
+});
+
+// Ajustar stock por delta (+/-)
+router.post("/stock/adjust", async (req: Request, res: Response) => {
+  try {
+    const { ml_id, delta, min = 0, propagate = false, update_db = true } = req.body || {};
+
+    if (!ml_id || typeof delta !== "number" || Number.isNaN(delta)) {
+      return res.status(400).json({ error: "ml_id y delta (number) son requeridos" });
+    }
+
+    const token = await getCurrentToken();
+    if (!token) {
+      return res.status(401).json({ error: "No autenticado en Mercado Libre" });
+    }
+
+    const current = await getCurrentStockFromMercadoLibre(ml_id, token.access_token);
+    const target = Math.max(Number(min) || 0, current + Math.trunc(delta));
+
+    const mlResponse = await updateStockInMercadoLibre(ml_id, target, token.access_token);
+
+    if (update_db) {
+      await Producto.updateOne({ ml_id }, { $set: { available_quantity: target } });
+    }
+
+    if (propagate) {
+      try {
+        await propagateStockToGroup(ml_id, target, token.access_token);
+      } catch (e: any) {
+        // Continuar aunque la propagación falle
+      }
+    }
+
+    return res.json({
+      success: true,
+      action: "adjust",
+      ml_id,
+      previous_stock: current,
+      new_stock: target,
+      delta: Math.trunc(delta),
+      propagated: !!propagate,
+      db_updated: !!update_db,
+      mercadolibre_response: mlResponse
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error ajustando stock", details: err.message });
+  }
 });
 
 // -------------------- CRON --------------------
