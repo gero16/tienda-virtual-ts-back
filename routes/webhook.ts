@@ -48,17 +48,14 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     console.log(colors.cyan(`   🆔 External Reference: ${paymentData.external_reference}`));
     console.log(colors.cyan(`   🧪 Live Mode: ${paymentData.live_mode}`));
 
-    // 🧪 IMPORTANTE: Detectar si es un pago de PRUEBA
+    // 🧪 IMPORTANTE: Detectar si es un pago de PRUEBA (sandbox)
     const esPagoDePrueba = paymentData.live_mode === false;
-    
     if (esPagoDePrueba) {
       console.log(colors.yellow("   🧪 PAGO DE PRUEBA DETECTADO"));
-      console.log(colors.yellow("   ⚠️  NO se actualizará el stock (es solo una prueba)"));
-      console.log(colors.yellow("   ✅ Pago de prueba registrado, pero stock se mantiene igual"));
-      return; // Salir sin actualizar stock
+      console.log(colors.yellow("   ✅ Modo prueba habilitado para actualizar stock también"));
+    } else {
+      console.log(colors.green("   ✅ Pago de PRODUCCIÓN detectado, se procesará normalmente"));
     }
-
-    console.log(colors.green("   ✅ Pago de PRODUCCIÓN detectado, se procesará normalmente"));
 
     // Solo procesar pagos aprobados
     if (paymentData.status !== "approved") {
