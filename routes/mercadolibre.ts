@@ -1396,6 +1396,30 @@ router.put("/productos/:id/destacado", async (req: Request, res: Response) => {
   }
 });
 
+// 🆕 Categorías distintas con conteo (rápido para nav)
+router.get("/categories/distinct", async (req: Request, res: Response) => {
+  try {
+    const onlyActive = (req.query.onlyActive as string | undefined) !== 'false';
+    const match: any = { archivado: { $ne: true } };
+    if (onlyActive) match.status = { $ne: 'paused' };
+
+    const results = await Producto.aggregate([
+      { $match: match },
+      { $group: { _id: "$category_id", count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]).exec();
+
+    const categories = results
+      .filter((r: any) => r._id && typeof r._id === 'string')
+      .map((r: any) => ({ category_id: r._id as string, count: r.count as number }));
+
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    return res.json({ categories });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error al obtener categorías: ' + err.message });
+  }
+});
+
 // Endpoint para productos con descuento
 router.get("/productos/discounted", async (req: Request, res: Response) => {
   try {
