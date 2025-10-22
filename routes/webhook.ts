@@ -18,19 +18,41 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     // Responder inmediatamente a MercadoPago (requisito de la API)
     res.status(200).send("OK");
 
-    const { type, data } = req.body;
+    const body: any = req.body || {};
+    const query: any = (req as any).query || {};
+
+    // Compatibilidad con diferentes formatos de MP (type/topic en body o query)
+    const rawType = body.type || query.type || body.topic || query.topic || body.action;
+    const rawData = body.data || {};
+    let paymentId: string | undefined = rawData.id || body.id || query.id;
+
+    // A veces viene como 'resource': 'https://api.mercadopago.com/v1/payments/1234567890'
+    if (!paymentId && (body.resource || query.resource)) {
+      const resource = String(body.resource || query.resource);
+      const match = resource.match(/payments\/(\d+)/);
+      if (match && match[1]) paymentId = match[1];
+    }
 
     console.log(colors.blue("\n🔔 Webhook de MercadoPago recibido"));
-    console.log(colors.blue(`   Type: ${type}`));
-    console.log(colors.blue(`   Data: ${JSON.stringify(data, null, 2)}`));
+    console.log(colors.blue(`   Type/Topic: ${rawType}`));
+    console.log(colors.blue(`   PaymentId: ${paymentId}`));
+    // Log limitado del cuerpo para diagnóstico
+    if (!rawType || !paymentId) {
+      console.log(colors.yellow("   ℹ️  Payload parcial recibido (body/query):"));
+      console.log(colors.yellow(`   body: ${JSON.stringify(body).slice(0, 500)}${JSON.stringify(body).length > 500 ? '…' : ''}`));
+      console.log(colors.yellow(`   query: ${JSON.stringify(query)}`));
+    }
 
-    // Solo procesar notificaciones de pagos
-    if (type !== "payment") {
-      console.log(colors.yellow("   ⚠️  No es una notificación de pago, ignorando"));
+    // Si viene un type/topic explícito y no es pago, salir
+    if (rawType && rawType !== "payment") {
+      console.log(colors.yellow("   ⚠️  Notificación no es de pago, ignorando"));
       return;
     }
 
-    const paymentId = data.id;
+    if (!paymentId) {
+      console.log(colors.red("   ❌ No se pudo determinar el payment ID"));
+      return;
+    }
 
     if (!paymentId) {
       console.log(colors.red("   ❌ No se recibió payment ID"));
