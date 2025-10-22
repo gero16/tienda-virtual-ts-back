@@ -221,6 +221,8 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       auto_return: "approved" as const,
       external_reference: external_reference,
       statement_descriptor: "TIENDA VIRTUAL",
+      // Enviar notificaciones al webhook específicamente para esta preferencia
+      notification_url: process.env.MP_WEBHOOK_URL || 'https://poppy-shop-production.up.railway.app/webhook/mercadopago',
       metadata: {
         customer_email: customerData?.email,
         customer_name: customerData?.name,
