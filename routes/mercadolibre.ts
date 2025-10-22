@@ -6,6 +6,7 @@ import Producto from "../models/Producto";
 import cron from "node-cron";
 import { Types } from "mongoose";
 import Variante from "../models/Variante";
+import ProductoModel from "../models/Producto";
 
 const router = Router();
 
@@ -5353,3 +5354,43 @@ router.post("/reset-auth", async (req: Request, res: Response) => {
 });
 
 export default router;
+
+// =====================
+// 🆕 Productos paginados (para admin)
+// GET /ml/productos?limit=250&offset=0&fields=ml_id,title,price,available_quantity,status,images,category_id,shipping,dias_preparacion,dias_envio_estimado,proveedor,pais_origen,destacado
+// =====================
+router.get("/productos", async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(parseInt((req.query.limit as string) || "250"), 1000);
+    const offset = Math.max(parseInt((req.query.offset as string) || "0"), 0);
+    const fields = (req.query.fields as string) || "";
+    const status = (req.query.status as string) || undefined;
+
+    const projection: any = {};
+    if (fields) {
+      for (const f of fields.split(",")) {
+        const key = f.trim();
+        if (key) projection[key] = 1;
+      }
+    }
+
+    const filter: any = {};
+    if (status && status !== "all") {
+      filter.status = status;
+    }
+
+    const [items, total] = await Promise.all([
+      ProductoModel.find(filter, projection).sort({ _id: 1 }).skip(offset).limit(limit).lean(),
+      ProductoModel.countDocuments(filter)
+    ]);
+
+    return res.json({
+      total,
+      limit,
+      offset,
+      items
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: "Error obteniendo productos paginados", message: error.message });
+  }
+});
