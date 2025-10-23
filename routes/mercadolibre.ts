@@ -926,32 +926,73 @@ async function forceUpdateProductos() {
 // 🚀 Endpoint OPTIMIZADO con paginación para carga rápida
 router.get("/productos", async (req: Request, res: Response) => {
   try {
-    const { limit, skip, page } = req.query;
-    
-    // Si se especifica limit, usar paginación
+    const { limit, skip, page, offset, status, q, fields, categoryIds } = req.query as Record<string, string>;
+
+    // Filtros base (excluye archivados y duplicados apuntados)
+    const baseFilter: any = {
+      archivado: { $ne: true },
+      $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ]
+    };
+
+    // Construir cláusulas dinámicas
+    const andClauses: any[] = [ baseFilter ];
+    if (status && (status === 'active' || status === 'paused')) {
+      andClauses.push({ status });
+    }
+    if (q && String(q).trim()) {
+      const term = String(q).trim();
+      const regex = new RegExp(term, 'i');
+      andClauses.push({ $or: [
+        { title: regex },
+        { ml_id: regex },
+        { seller_sku: regex },
+        { 'variantes.color': regex },
+        { 'variantes.size': regex },
+        { 'variantes.id': regex }
+      ]});
+    }
+    // Filtro por múltiples categorías ML si se proveen (CSV)
+    if (categoryIds && String(categoryIds).trim()) {
+      const ids = String(categoryIds).split(',').map(s => s.trim()).filter(Boolean);
+      if (ids.length > 0) {
+        andClauses.push({ category_id: { $in: ids } });
+      }
+    }
+    const mongoFilter = andClauses.length > 1 ? { $and: andClauses } : baseFilter;
+
+    // Proyección opcional de campos
+    let projection: any | undefined = undefined;
+    if (fields && String(fields).trim()) {
+      projection = {} as any;
+      for (const f of String(fields).split(',').map(s => s.trim()).filter(Boolean)) {
+        projection[f] = 1;
+      }
+      // Asegurar que 'variantes' esté disponible para populate si se usa proyección
+      if (projection && projection.variantes !== 1) {
+        projection.variantes = 1;
+      }
+    }
+
+    // Paginación si hay limit
     if (limit) {
-      const limitNum = parseInt(limit as string) || 50;
-      const skipNum = skip ? parseInt(skip as string) : 0;
-      const pageNum = page ? parseInt(page as string) : 1;
-      
-      // Calcular skip basado en página si se proporciona
-      const actualSkip = page ? (pageNum - 1) * limitNum : skipNum;
-      
-      // Obtener total de productos para metadata (excluye archivados y duplicados apuntados)
-      const baseFilter = { 
-        archivado: { $ne: true },
-        $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ]
-      } as any;
-      const total = await Producto.countDocuments(baseFilter);
-      
-      // Obtener productos con paginación (más rápido)
-      const productos = await Producto.find(baseFilter)
+      const limitNum = parseInt(String(limit)) || 50;
+      const skipNum = skip ? parseInt(String(skip)) : 0;
+      const offsetNum = offset ? parseInt(String(offset)) : undefined;
+      const pageNum = page ? parseInt(String(page)) : 1;
+      const actualSkip = page ? (pageNum - 1) * limitNum : ((offsetNum ?? skipNum) || 0);
+
+      // Contar con el mismo filtro aplicado
+      const total = await Producto.countDocuments(mongoFilter);
+
+      // Query con proyección opcional
+      let query = Producto.find(mongoFilter) as any;
+      if (projection) query = query.select(projection);
+      const productos = await query
         .populate("variantes")
         .limit(limitNum)
         .skip(actualSkip)
-        .lean(); // 🚀 .lean() hace la query más rápida (sin métodos de Mongoose)
-      
-      // Respuesta con metadata de paginación
+        .lean();
+
       return res.json({
         productos,
         pagination: {
@@ -964,15 +1005,89 @@ router.get("/productos", async (req: Request, res: Response) => {
         }
       });
     }
-    
-    // Si no se especifica limit, devolver todos (excluye archivados y duplicados apuntados)
-    const productos = await Producto.find({ 
-      archivado: { $ne: true },
-      $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ]
-    }).populate("variantes");
+
+    // Sin limit: devolver todos con filtro aplicado
+    let queryAll = Producto.find(mongoFilter) as any;
+    if (projection) queryAll = queryAll.select(projection);
+    const productos = await queryAll.populate("variantes");
     res.json(productos);
   } catch (err: any) {
     res.status(500).send("❌ Error al obtener productos: " + err.message);
+  }
+});
+
+// =====================
+// 🆕 Productos por categoría ML (endpoint específico)
+// GET /ml/categories/:categoryIds/productos?limit=120&offset=0&fields=ml_id,title,price,...&status=active
+// GET /ml/categories/productos?categoryIds=MLU1055,MLU12953&limit=120
+// Si no se pasa limit, devuelve todos los productos de las categorías (cuidado con payloads grandes)
+// =====================
+router.get(["/categories/:categoryIds/productos", "/categories/productos"], async (req: Request, res: Response) => {
+  try {
+    const categoryIdsParam = (req.params.categoryIds as string) || (req.query.categoryIds as string) || "";
+    const fields = (req.query.fields as string) || "";
+    const status = (req.query.status as string) || undefined;
+    const limitStr = (req.query.limit as string) || "";
+    const offsetStr = (req.query.offset as string) || "0";
+
+    const categoryIds = String(categoryIdsParam)
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (categoryIds.length === 0) {
+      return res.status(400).json({ error: "categoryIds requerido (param o query)" });
+    }
+
+    // Filtro base coherente con tienda (excluir archivados y duplicados apuntados)
+    const baseFilter: any = {
+      archivado: { $ne: true },
+      $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ],
+      category_id: { $in: categoryIds }
+    };
+    if (status && status !== 'all') {
+      baseFilter.status = status;
+    }
+
+    // Proyección opcional de campos
+    let projection: any | undefined = undefined;
+    if (fields && String(fields).trim()) {
+      projection = {} as any;
+      for (const f of String(fields).split(',').map(s => s.trim()).filter(Boolean)) {
+        projection[f] = 1;
+      }
+      if (projection && projection.variantes !== 1) {
+        projection.variantes = 1;
+      }
+    }
+
+    const hasPagination = !!limitStr;
+    if (hasPagination) {
+      const limit = Math.min(parseInt(limitStr) || 50, 1000);
+      const offset = Math.max(parseInt(offsetStr) || 0, 0);
+      const [items, total] = await Promise.all([
+        (projection
+          ? Producto.find(baseFilter).select(projection)
+          : Producto.find(baseFilter))
+          .populate('variantes')
+          .sort({ _id: 1 })
+          .skip(offset)
+          .limit(limit)
+          .lean(),
+        Producto.countDocuments(baseFilter)
+      ]);
+      return res.json({ total, limit, offset, items });
+    }
+
+    // Sin paginación: devolver todos (usar con cuidado)
+    const items = await (projection
+      ? Producto.find(baseFilter).select(projection)
+      : Producto.find(baseFilter))
+      .populate('variantes')
+      .sort({ _id: 1 })
+      .lean();
+    return res.json({ total: items.length, items });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error obteniendo productos por categoría", message: err.message });
   }
 });
 
