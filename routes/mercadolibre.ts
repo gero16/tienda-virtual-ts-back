@@ -926,7 +926,7 @@ async function forceUpdateProductos() {
 // 🚀 Endpoint OPTIMIZADO con paginación para carga rápida
 router.get("/productos", async (req: Request, res: Response) => {
   try {
-    const { limit, skip, page, offset, status, q, fields, categoryIds } = req.query as Record<string, string>;
+    const { limit, skip, page, offset, status, q, fields, categoryIds, destacado } = req.query as Record<string, string>;
 
     // Filtros base (excluye archivados y duplicados apuntados)
     const baseFilter: any = {
@@ -957,6 +957,12 @@ router.get("/productos", async (req: Request, res: Response) => {
       if (ids.length > 0) {
         andClauses.push({ category_id: { $in: ids } });
       }
+    }
+    // Filtro destacado manual
+    if (typeof destacado !== 'undefined') {
+      const val = String(destacado).toLowerCase();
+      if (val === 'true' || val === '1') andClauses.push({ destacado: true });
+      if (val === 'false' || val === '0') andClauses.push({ destacado: { $ne: true } });
     }
     const mongoFilter = andClauses.length > 1 ? { $and: andClauses } : baseFilter;
 
@@ -5469,6 +5475,79 @@ router.post("/reset-auth", async (req: Request, res: Response) => {
 });
 
 export default router;
+// =====================
+// 🆕 Marcar/Desmarcar producto como destacado (admin)
+// PUT /ml/productos/:ml_id/destacado { destacado: true|false }
+// =====================
+import { authenticate, authorize } from "../middleware/auth";
+import Producto from "../models/Producto";
+
+router.put("/productos/:ml_id/destacado", authenticate, authorize("admin"), async (req: Request, res: Response) => {
+  try {
+    const ml_id = req.params.ml_id;
+    const { destacado } = req.body as { destacado: boolean };
+    if (typeof destacado === 'undefined') {
+      return res.status(400).json({ error: "Campo 'destacado' requerido" });
+    }
+    const prod = await Producto.findOneAndUpdate(
+      { ml_id },
+      { $set: { destacado: !!destacado } },
+      { new: true }
+    );
+    if (!prod) {
+      return res.status(404).json({ error: "Producto no encontrado" });
+    }
+    return res.json({ success: true, ml_id, destacado: prod.destacado === true });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error actualizando destacado", message: err.message });
+  }
+});
+
+// =====================
+// 🆕 Crear nuevo producto básico (admin)
+// POST /ml/productos
+// =====================
+router.post("/productos", authenticate, authorize("admin"), async (req: Request, res: Response) => {
+  try {
+    const {
+      ml_id,
+      title,
+      price,
+      available_quantity,
+      status,
+      category_id,
+      main_image,
+      images,
+      description
+    } = req.body as any;
+
+    if (!ml_id || !title || typeof price !== 'number' || typeof available_quantity !== 'number' || !status) {
+      return res.status(400).json({ error: "ml_id, title, price, available_quantity y status son requeridos" });
+    }
+
+    const existente = await Producto.findOne({ ml_id });
+    if (existente) {
+      return res.status(400).json({ error: "Ya existe un producto con ese ml_id" });
+    }
+
+    const doc = await Producto.create({
+      ml_id,
+      title,
+      price,
+      available_quantity,
+      status,
+      category_id: category_id || '',
+      main_image: main_image || undefined,
+      images: Array.isArray(images) ? images : (main_image ? [{ id: 'main', url: main_image, max_size: '' }] : []),
+      description: description || '',
+      destacado: false
+    } as any);
+
+    return res.status(201).json({ success: true, producto: doc });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error creando producto", message: err.message });
+  }
+});
 
 // =====================
 // 🆕 Productos paginados (para admin)
