@@ -5607,4 +5607,74 @@ router.get("/admin/productos", authenticate, authorize("admin"), async (req: Req
   }
 });
 
+// =====================
+// ✅ Productos (público)
+// - Sin limit/offset: devuelve ARRAY (compatibilidad anterior)
+// - Con limit/offset: devuelve { total, items }
+// Filtros: status, q, categoryIds, destacado, fields
+// =====================
+router.get("/productos", async (req: Request, res: Response) => {
+  try {
+    const { status, q, fields, categoryIds, destacado } = req.query as Record<string, string>;
+    const hasLimit = typeof req.query.limit !== 'undefined';
+    const hasOffset = typeof req.query.offset !== 'undefined';
+    const limit = hasLimit ? Math.min(parseInt(String(req.query.limit || '100')), 1000) : undefined;
+    const offset = hasOffset ? Math.max(parseInt(String(req.query.offset || '0')), 0) : undefined;
+
+    // Filtro base (excluir archivados y duplicados apuntados)
+    const baseFilter: any = {
+      archivado: { $ne: true },
+      $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ]
+    };
+    const andClauses: any[] = [ baseFilter ];
+    if (status && (status === 'active' || status === 'paused')) {
+      andClauses.push({ status });
+    }
+    if (q && String(q).trim()) {
+      const term = String(q).trim();
+      const regex = new RegExp(term, 'i');
+      andClauses.push({ $or: [
+        { title: regex },
+        { ml_id: regex },
+        { seller_sku: regex },
+        { 'variantes.color': regex },
+        { 'variantes.size': regex },
+        { 'variantes.id': regex }
+      ]});
+    }
+    if (categoryIds && String(categoryIds).trim()) {
+      const ids = String(categoryIds).split(',').map(s => s.trim()).filter(Boolean);
+      if (ids.length > 0) andClauses.push({ category_id: { $in: ids } });
+    }
+    if (typeof destacado !== 'undefined') {
+      const val = String(destacado).toLowerCase();
+      if (val === 'true' || val === '1') andClauses.push({ destacado: true });
+      if (val === 'false' || val === '0') andClauses.push({ destacado: { $ne: true } });
+    }
+    const mongoFilter = andClauses.length > 1 ? { $and: andClauses } : baseFilter;
+
+    // Proyección opcional
+    let projection: any | undefined;
+    if (fields && String(fields).trim()) {
+      projection = {} as any;
+      for (const f of String(fields).split(',').map(s => s.trim()).filter(Boolean)) {
+        projection[f] = 1;
+      }
+    }
+
+    if (typeof limit === 'number') {
+      const [items, total] = await Promise.all([
+        Producto.find(mongoFilter, projection).sort({ _id: 1 }).skip(offset || 0).limit(limit).lean(),
+        Producto.countDocuments(mongoFilter)
+      ]);
+      return res.json({ total, items });
+    }
+
+    const items = await Producto.find(mongoFilter, projection).sort({ _id: 1 }).lean();
+    return res.json(items);
+  } catch (error: any) {
+    return res.status(500).json({ error: "Error obteniendo productos", message: error.message });
+  }
+});
+
 export default router;
