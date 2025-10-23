@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { authenticate, authorize } from "../middleware/auth";
 import axios from "axios";
 import Token from "../models/Token";
 import Notificacion from "../models/Notificacion";
@@ -6,7 +7,6 @@ import Producto from "../models/Producto";
 import cron from "node-cron";
 import { Types } from "mongoose";
 import Variante from "../models/Variante";
-import ProductoModel from "../models/Producto";
 
 const router = Router();
 
@@ -924,7 +924,8 @@ async function forceUpdateProductos() {
 }
 
 // 🚀 Endpoint OPTIMIZADO con paginación para carga rápida
-router.get("/productos", async (req: Request, res: Response) => {
+// (ANTIGUO) Duplicado: consolidar en el de más abajo
+router.get("/admin/productos", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { limit, skip, page, offset, status, q, fields, categoryIds, destacado } = req.query as Record<string, string>;
 
@@ -5474,13 +5475,7 @@ router.post("/reset-auth", async (req: Request, res: Response) => {
   }
 });
 
-export default router;
-// =====================
-// 🆕 Marcar/Desmarcar producto como destacado (admin)
-// PUT /ml/productos/:ml_id/destacado { destacado: true|false }
-// =====================
-import { authenticate, authorize } from "../middleware/auth";
-import Producto from "../models/Producto";
+// Nota: La exportación del router debe ir al final del archivo
 
 router.put("/productos/:ml_id/destacado", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
@@ -5550,10 +5545,33 @@ router.post("/productos", authenticate, authorize("admin"), async (req: Request,
 });
 
 // =====================
+// 🆕 Batch destacados (admin)
+// PUT /ml/productos/destacado/batch { ml_ids: string[], destacado: boolean }
+// =====================
+router.put("/productos/destacado/batch", authenticate, authorize("admin"), async (req: Request, res: Response) => {
+  try {
+    const { ml_ids, destacado } = req.body as { ml_ids: string[]; destacado: boolean };
+    if (!Array.isArray(ml_ids) || typeof destacado === 'undefined') {
+      return res.status(400).json({ error: "Se requieren 'ml_ids' (array) y 'destacado' (boolean)" });
+    }
+    const ids = ml_ids.map((s) => String(s).trim()).filter(Boolean);
+    if (ids.length === 0) {
+      return res.status(400).json({ error: "Lista de ml_ids vacía" });
+    }
+    const result = await Producto.updateMany({ ml_id: { $in: ids } }, { $set: { destacado: !!destacado } });
+    const matched = (result as any).matchedCount ?? (result as any).n ?? 0;
+    const modified = (result as any).modifiedCount ?? (result as any).nModified ?? 0;
+    return res.json({ success: true, matched, modified, destacado: !!destacado });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Error actualizando destacados", message: err.message });
+  }
+});
+
+// =====================
 // 🆕 Productos paginados (para admin)
 // GET /ml/productos?limit=250&offset=0&fields=ml_id,title,price,available_quantity,status,images,category_id,shipping,dias_preparacion,dias_envio_estimado,proveedor,pais_origen,destacado
 // =====================
-router.get("/productos", async (req: Request, res: Response) => {
+router.get("/admin/productos", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const limit = Math.min(parseInt((req.query.limit as string) || "250"), 1000);
     const offset = Math.max(parseInt((req.query.offset as string) || "0"), 0);
@@ -5574,8 +5592,8 @@ router.get("/productos", async (req: Request, res: Response) => {
     }
 
     const [items, total] = await Promise.all([
-      ProductoModel.find(filter, projection).sort({ _id: 1 }).skip(offset).limit(limit).lean(),
-      ProductoModel.countDocuments(filter)
+      Producto.find(filter, projection).sort({ _id: 1 }).skip(offset).limit(limit).lean(),
+      Producto.countDocuments(filter)
     ]);
 
     return res.json({
@@ -5588,3 +5606,5 @@ router.get("/productos", async (req: Request, res: Response) => {
     return res.status(500).json({ error: "Error obteniendo productos paginados", message: error.message });
   }
 });
+
+export default router;
