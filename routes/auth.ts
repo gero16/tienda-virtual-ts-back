@@ -44,6 +44,27 @@ router.post("/login", async (req: Request, res: Response) => {
   }
 });
 
+// POST /auth/register (clientes/usuarios estándar)
+router.post("/register", async (req: Request, res: Response) => {
+  try {
+    const { nombre, email, password } = req.body as { nombre: string; email: string; password: string };
+    if (!nombre || !email || !password) {
+      return res.status(400).json({ error: "nombre, email y password son requeridos" });
+    }
+
+    const existente = await Usuario.findOne({ email: email.toLowerCase() });
+    if (existente) {
+      return res.status(400).json({ error: "El email ya está registrado" });
+    }
+
+    const nuevo = await Usuario.create({ nombre, email: email.toLowerCase(), password, rol: "editor" });
+    const token = signToken({ id: nuevo._id.toString(), email: nuevo.email, rol: nuevo.rol });
+    return res.status(201).json({ token, user: { id: nuevo._id, nombre: nuevo.nombre, email: nuevo.email, rol: nuevo.rol } });
+  } catch (error: any) {
+    return res.status(500).json({ error: "Error registrando usuario", message: error.message });
+  }
+});
+
 // POST /auth/register-admin
 // Política: permitir crear el primer admin si no existe ninguno aún.
 router.post("/register-admin", async (req: Request, res: Response) => {

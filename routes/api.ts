@@ -886,18 +886,27 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     console.log(colors.green(`   Status Detail: ${response.body.status_detail}`));
     
     // 🔒 PASO 5: DECIDIR SI HACER COMMIT O ABORT
+    const ALLOW_PENDING_AS_APPROVED = String(process.env.ALLOW_PENDING_AS_APPROVED || '').toLowerCase() === 'true'
+    const ALLOW_REJECTED_IN_DEV = String(process.env.ALLOW_REJECTED_IN_DEV || '').toLowerCase() === 'true'
+    const isSandbox = response.body.live_mode === false
+
     if (response.body.status === 'rejected' || response.body.status === 'cancelled') {
-      // ❌ PAGO RECHAZADO: Hacer rollback del stock
-      console.log(colors.red("❌ Pago rechazado/cancelado, haciendo rollback de stock..."));
-      await session.abortTransaction();
-      session.endSession();
-      
-      return res.json({
-        id: response.body.id,
-        status: response.body.status,
-        status_detail: response.body.status_detail,
-        message: "Pago no aprobado, stock restaurado"
-      });
+      if (ALLOW_REJECTED_IN_DEV && (process.env.NODE_ENV !== 'production' || isSandbox)) {
+        console.log(colors.yellow("⚠️ Modo DEV: tratando pago rechazado como pendiente para pruebas"))
+        // Continuar flujo como si fuera 'pending'
+      } else {
+        // ❌ PAGO RECHAZADO: Hacer rollback del stock
+        console.log(colors.red("❌ Pago rechazado/cancelado, haciendo rollback de stock..."));
+        await session.abortTransaction();
+        session.endSession();
+        
+        return res.json({
+          id: response.body.id,
+          status: response.body.status,
+          status_detail: response.body.status_detail,
+          message: "Pago no aprobado, stock restaurado"
+        });
+      }
     }
     
     // ✅ PAGO APROBADO o PENDIENTE: Confirmar la transacción
@@ -942,7 +951,7 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         date_approved: response.body.date_approved ? new Date(response.body.date_approved) : undefined,
         
         // Estado
-        status: response.body.status === 'approved' ? 'approved' : 'pending'
+        status: response.body.status === 'approved' ? 'approved' : (ALLOW_PENDING_AS_APPROVED ? 'approved' : 'pending')
       };
 
       const nuevaOrden = new Orden(ordenData);
