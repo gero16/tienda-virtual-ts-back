@@ -63,7 +63,11 @@ app.use(bodyParser.urlencoded({ extended: true }))
 import mercadopago from 'mercadopago';
 
 // Configurar MercadoPago con variable de entorno
-const mpAccessToken = process.env.MP_ACCESS_TOKEN || 'TEST-3488859500794386-010715-320f2dd75257891352172318a1ed84fd-370206533';
+const mpAccessToken = process.env.MP_ACCESS_TOKEN;
+
+if (!mpAccessToken) {
+  throw new Error('MP_ACCESS_TOKEN no está definido. Configure las credenciales de MercadoPago en el entorno.');
+}
 
 mercadopago.configure({
   access_token: mpAccessToken,
