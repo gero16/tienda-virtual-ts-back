@@ -665,6 +665,37 @@ router.post("/process_payment", async (req: Request, res: Response) => {
 
     // Validar datos requeridos
     if (!transaction_amount || !token || !payment_method_id) {
+      // Registrar intento de orden aunque falten datos
+      try {
+        const ordenIntento = new Orden({
+          orden_id: `ORD-${Date.now()}`,
+          external_reference: external_reference || `ORDER-${Date.now()}`,
+          numero_orden: `ORD-${Date.now()}`,
+          payment_id: 'N/A',
+          payment_status: 'cancelled',
+          payment_status_detail: 'missing_required_fields',
+          transaction_amount: Number(transaction_amount || 0),
+          payment_method_id: String(payment_method_id || ''),
+          installments: Number(installments || 1),
+          customer: transformCustomerData(customer),
+          items: Array.isArray(items) ? items.map((it: any, index: number) => ({
+            product_id: (it.product_id || it.id || `item-${index}`).toString(),
+            product_name: (it.product_name || it.title || it.name || `Producto ${index + 1}`).toString(),
+            quantity: Number(it.quantity || it.cantidad || 1),
+            unit_price: Number(it.unit_price || it.price || 0),
+            total_price: Number(it.quantity || it.cantidad || 1) * Number(it.unit_price || it.price || 0)
+          })) : [],
+          subtotal: Number(transaction_amount || 0),
+          descuento_cupon: 0,
+          total: Number(transaction_amount || 0),
+          currency: 'UYU',
+          date_created: new Date(),
+          status: 'cancelled',
+          notes: 'Intento de pago inválido: faltan datos requeridos'
+        });
+        await ordenIntento.save();
+        await AdminNotification.create({ type: 'order', status: 'unread', message: `Orden fallida (datos faltantes) - $${transaction_amount || 0}`, order_id: ordenIntento.orden_id, customer_email: ordenIntento.customer.email, total: ordenIntento.total, currency: ordenIntento.currency });
+      } catch {}
       return res.status(400).json({ 
         error: "Faltan datos requeridos: transaction_amount, token, payment_method_id" 
       });
@@ -683,6 +714,37 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     
     if (!transformedItems || transformedItems.length === 0) {
       await session.abortTransaction();
+      // Registrar intento con items crudos
+      try {
+        const ordenIntento = new Orden({
+          orden_id: `ORD-${Date.now()}`,
+          external_reference: external_reference || `ORDER-${Date.now()}`,
+          numero_orden: `ORD-${Date.now()}`,
+          payment_id: 'N/A',
+          payment_status: 'cancelled',
+          payment_status_detail: 'invalid_items',
+          transaction_amount: Number(transaction_amount || 0),
+          payment_method_id: String(payment_method_id || ''),
+          installments: Number(installments || 1),
+          customer: transformCustomerData(customer),
+          items: Array.isArray(items) ? items.map((it: any, index: number) => ({
+            product_id: (it.product_id || it.id || `item-${index}`).toString(),
+            product_name: (it.product_name || it.title || it.name || `Producto ${index + 1}`).toString(),
+            quantity: Number(it.quantity || it.cantidad || 1),
+            unit_price: Number(it.unit_price || it.price || 0),
+            total_price: Number(it.quantity || it.cantidad || 1) * Number(it.unit_price || it.price || 0)
+          })) : [],
+          subtotal: Number(transaction_amount || 0),
+          descuento_cupon: 0,
+          total: Number(transaction_amount || 0),
+          currency: 'UYU',
+          date_created: new Date(),
+          status: 'cancelled',
+          notes: 'No hay items válidos en la orden'
+        });
+        await ordenIntento.save();
+        await AdminNotification.create({ type: 'order', status: 'unread', message: `Orden fallida (items inválidos) - $${transaction_amount || 0}`, order_id: ordenIntento.orden_id, customer_email: ordenIntento.customer.email, total: ordenIntento.total, currency: ordenIntento.currency });
+      } catch {}
       return res.status(400).json({ 
         error: "No hay items válidos en la orden" 
       });
@@ -728,7 +790,31 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       console.log(colors.red("❌ Error validando precios, abortando transacción..."));
       await session.abortTransaction();
       session.endSession();
-      
+      // Guardar intento
+      try {
+        const ordenIntento = new Orden({
+          orden_id: `ORD-${Date.now()}`,
+          external_reference: external_reference || `ORDER-${Date.now()}`,
+          numero_orden: `ORD-${Date.now()}`,
+          payment_id: 'N/A',
+          payment_status: 'cancelled',
+          payment_status_detail: 'price_validation_error',
+          transaction_amount: Number(transaction_amount || 0),
+          payment_method_id: String(payment_method_id || ''),
+          installments: Number(installments || 1),
+          customer: transformCustomerData(customer),
+          items: transformedItems,
+          subtotal: Number(transaction_amount || 0),
+          descuento_cupon: 0,
+          total: Number(transaction_amount || 0),
+          currency: 'UYU',
+          date_created: new Date(),
+          status: 'cancelled',
+          notes: `Error al validar precios: ${validacionError.message}`
+        });
+        await ordenIntento.save();
+        await AdminNotification.create({ type: 'order', status: 'unread', message: `Orden fallida (precios) - $${transaction_amount || 0}`, order_id: ordenIntento.orden_id, customer_email: ordenIntento.customer.email, total: ordenIntento.total, currency: ordenIntento.currency });
+      } catch {}
       return res.status(400).json({ 
         error: "Error al validar precios", 
         details: validacionError.message 
@@ -753,7 +839,31 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         console.log(colors.red(`❌ Cupón inválido: ${validacionCupon.error}`));
         await session.abortTransaction();
         session.endSession();
-        
+        // Guardar intento
+        try {
+          const ordenIntento = new Orden({
+            orden_id: `ORD-${Date.now()}`,
+            external_reference: external_reference || `ORDER-${Date.now()}`,
+            numero_orden: `ORD-${Date.now()}`,
+            payment_id: 'N/A',
+            payment_status: 'cancelled',
+            payment_status_detail: 'coupon_invalid',
+            transaction_amount: Number(transaction_amount || 0),
+            payment_method_id: String(payment_method_id || ''),
+            installments: Number(installments || 1),
+            customer: transformCustomerData(customer),
+            items: transformedItems,
+            subtotal: Number(transaction_amount || 0),
+            descuento_cupon: 0,
+            total: Number(transaction_amount || 0),
+            currency: 'UYU',
+            date_created: new Date(),
+            status: 'cancelled',
+            notes: `Cupón inválido: ${validacionCupon.error}`
+          });
+          await ordenIntento.save();
+          await AdminNotification.create({ type: 'order', status: 'unread', message: `Orden fallida (cupón) - $${transaction_amount || 0}`, order_id: ordenIntento.orden_id, customer_email: ordenIntento.customer.email, total: ordenIntento.total, currency: ordenIntento.currency });
+        } catch {}
         return res.status(400).json({ 
           error: `Cupón inválido: ${validacionCupon.error}`,
           cupon_rechazado: true
@@ -785,7 +895,31 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       console.log(colors.red(`❌ FRAUDE DETECTADO: Diferencia de $${diferenciaFinal}`));
       await session.abortTransaction();
       session.endSession();
-      
+      // Guardar intento
+      try {
+        const ordenIntento = new Orden({
+          orden_id: `ORD-${Date.now()}`,
+          external_reference: external_reference || `ORDER-${Date.now()}`,
+          numero_orden: `ORD-${Date.now()}`,
+          payment_id: 'N/A',
+          payment_status: 'cancelled',
+          payment_status_detail: 'amount_mismatch',
+          transaction_amount: Number(transaction_amount || 0),
+          payment_method_id: String(payment_method_id || ''),
+          installments: Number(installments || 1),
+          customer: transformCustomerData(customer),
+          items: transformedItems,
+          subtotal: totalCalculado,
+          descuento_cupon: 0,
+          total: Number(transaction_amount || 0),
+          currency: 'UYU',
+          date_created: new Date(),
+          status: 'cancelled',
+          notes: `Diferencia de montos: esperado ${totalCalculado}, recibido ${transaction_amount}`
+        });
+        await ordenIntento.save();
+        await AdminNotification.create({ type: 'order', status: 'unread', message: `Orden fallida (monto) - $${transaction_amount || 0}`, order_id: ordenIntento.orden_id, customer_email: ordenIntento.customer.email, total: ordenIntento.total, currency: ordenIntento.currency });
+      } catch {}
       return res.status(400).json({ 
         error: "El monto final no coincide con el total esperado",
         total_esperado: totalCalculado,
@@ -905,7 +1039,32 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       
       await session.abortTransaction();
       session.endSession();
-      
+      // Guardar intento rechazado
+      try {
+        const ordenIntento = new Orden({
+          orden_id: `ORD-${Date.now()}`,
+          external_reference: external_reference || `ORDER-${Date.now()}`,
+          numero_orden: `ORD-${Date.now()}`,
+          payment_id: 'N/A',
+          payment_status: 'rejected',
+          payment_status_detail: 'payment_error',
+          transaction_amount: Number(transaction_amount || 0),
+          payment_method_id: String(payment_method_id || ''),
+          installments: Number(installments || 1),
+          customer: transformCustomerData(customer),
+          items: itemsValidados.length ? itemsValidados : transformedItems,
+          subtotal: totalCalculado || Number(transaction_amount || 0),
+          descuento_cupon: descuentoCuponValidado || 0,
+          total: Number(transaction_amount || 0),
+          currency: 'UYU',
+          date_created: new Date(),
+          status: 'rejected',
+          notes: `Error MP: ${paymentError?.message || 'desconocido'}`,
+          mp_error: paymentError?.response || paymentError?.cause || paymentError
+        });
+        await ordenIntento.save();
+        await AdminNotification.create({ type: 'order', status: 'unread', message: `Orden rechazada (MP) - $${transaction_amount || 0}`, order_id: ordenIntento.orden_id, customer_email: ordenIntento.customer.email, total: ordenIntento.total, currency: ordenIntento.currency });
+      } catch {}
       return res.status(500).json({ 
         error: "Error procesando el pago", 
         details: paymentError.message,
@@ -932,7 +1091,32 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         console.log(colors.red("❌ Pago rechazado/cancelado, haciendo rollback de stock..."));
         await session.abortTransaction();
         session.endSession();
-        
+        // Guardar orden rechazada
+        try {
+          const ordenIntento = new Orden({
+            orden_id: `ORD-${Date.now()}`,
+            external_reference: external_reference || `ORDER-${Date.now()}`,
+            numero_orden: `ORD-${Date.now()}`,
+            payment_id: response.body.id?.toString?.() || 'N/A',
+            payment_status: response.body.status,
+            payment_status_detail: response.body.status_detail,
+            transaction_amount: Number(transaction_amount || 0),
+            payment_method_id: String(payment_method_id || ''),
+            installments: Number(installments || 1),
+            customer: transformCustomerData(customer),
+            items: itemsValidados.length ? itemsValidados : transformedItems,
+            subtotal: totalCalculado || Number(transaction_amount || 0),
+            descuento_cupon: descuentoCuponValidado || 0,
+            total: Number(transaction_amount || 0),
+            currency: 'UYU',
+            date_created: new Date(),
+            status: 'rejected',
+          notes: 'Pago rechazado/cancelado',
+          mp_error: response.body
+          });
+          await ordenIntento.save();
+          await AdminNotification.create({ type: 'order', status: 'unread', message: `Orden rechazada - $${transaction_amount || 0}`, order_id: ordenIntento.orden_id, customer_email: ordenIntento.customer.email, total: ordenIntento.total, currency: ordenIntento.currency });
+        } catch {}
         return res.json({
           id: response.body.id,
           status: response.body.status,

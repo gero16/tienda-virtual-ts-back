@@ -58,6 +58,7 @@ export interface IOrden extends Document {
   
   // Información adicional
   notes?: string;
+  mp_error?: any;
   shipping_address?: {
     street_name: string;
     street_number: string;
@@ -128,6 +129,7 @@ const OrdenSchema = new Schema<IOrden>({
   
   // Información adicional
   notes: { type: String },
+  mp_error: { type: (Schema as any).Types.Mixed },
   shipping_address: {
     street_name: { type: String },
     street_number: { type: String },
