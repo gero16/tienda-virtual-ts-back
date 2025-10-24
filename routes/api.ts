@@ -6,6 +6,7 @@ import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre, propagateStockToGroup } from "./mercadolibre"; // 🆕 Importar funciones de ML
 import { ClienteService } from "../services/clienteService"; // 🆕 Importar servicio de clientes
+import AdminNotification from "../models/AdminNotification";
 import Variante from "../models/Variante"; // 🆕 Importar el modelo de Variante
 import CuponModel from "../models/Cupon"; // 🆕 Importar modelo de Cupón
 
@@ -567,6 +568,38 @@ router.get("/orders", async (req: Request, res: Response) => {
     });
   }
 });
+// =====================
+// Notificaciones Admin (listar y marcar leídas)
+// =====================
+router.get("/admin/notifications", async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+    const skip = (page - 1) * pageSize;
+
+    const [items, total] = await Promise.all([
+      AdminNotification.find().sort({ createdAt: -1 }).skip(skip).limit(pageSize),
+      AdminNotification.countDocuments()
+    ]);
+
+    return res.json({ success: true, page, pageSize, total, items });
+  } catch (error: any) {
+    console.error(colors.red("❌ Error listando notificaciones:"), error);
+    return res.status(500).json({ error: "Error listando notificaciones", message: error.message });
+  }
+});
+
+router.patch("/admin/notifications/:id/read", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const updated = await AdminNotification.findByIdAndUpdate(id, { status: "read" }, { new: true });
+    if (!updated) return res.status(404).json({ error: "Notificación no encontrada" });
+    return res.json({ success: true, item: updated });
+  } catch (error: any) {
+    console.error(colors.red("❌ Error marcando notificación como leída:"), error);
+    return res.status(500).json({ error: "Error marcando como leída", message: error.message });
+  }
+});
 
 // =====================
 // Obtener una orden específica
@@ -958,6 +991,21 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       await nuevaOrden.save();
       
       console.log(colors.green("💾 Orden guardada en la base de datos:"));
+      // 🆕 Crear notificación para admin (siempre que llegue aquí)
+      try {
+        await AdminNotification.create({
+          type: "order",
+          status: "unread",
+          message: `Nueva orden ${ordenData.orden_id} - ${response.body.status.toUpperCase()} - $${transaction_amount}`,
+          order_id: ordenData.orden_id,
+          payment_id: response.body.id?.toString?.() || undefined,
+          customer_email: (customer?.email || payer?.email) as string,
+          total: Number(transaction_amount),
+          currency: 'UYU'
+        });
+      } catch (notifError) {
+        console.error(colors.red("❌ Error creando notificación admin:"), notifError);
+      }
       
       // 🆕 CREAR O ACTUALIZAR CLIENTE
       try {
