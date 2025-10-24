@@ -7,7 +7,6 @@ import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre, propagateStockToGroup } from "./mercadolibre"; // 🆕 Importar funciones de ML
 import { ClienteService } from "../services/clienteService"; // 🆕 Importar servicio de clientes
 import AdminNotification from "../models/AdminNotification";
-import { authenticate, authorize } from "../middleware/auth";
 import Variante from "../models/Variante"; // 🆕 Importar el modelo de Variante
 import CuponModel from "../models/Cupon"; // 🆕 Importar modelo de Cupón
 
@@ -572,7 +571,7 @@ router.get("/orders", async (req: Request, res: Response) => {
 // =====================
 // Notificaciones Admin (listar y marcar leídas)
 // =====================
-router.get("/admin/notifications", authenticate as any, authorize('admin') as any, async (req: Request, res: Response) => {
+router.get("/admin/notifications", async (req: Request, res: Response) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
@@ -590,7 +589,7 @@ router.get("/admin/notifications", authenticate as any, authorize('admin') as an
   }
 });
 
-router.patch("/admin/notifications/:id/read", authenticate as any, authorize('admin') as any, async (req: Request, res: Response) => {
+router.patch("/admin/notifications/:id/read", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const updated = await AdminNotification.findByIdAndUpdate(id, { status: "read" }, { new: true });
