@@ -227,7 +227,9 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
           name: paymentData.payer?.first_name || "Cliente",
           email: paymentData.payer?.email || "cliente@example.com",
           phone: paymentData.payer?.phone?.number || "",
-          address: paymentData.payer?.address?.street_name || ""
+          address: paymentData.payer?.address?.street_name || "",
+          city: paymentData.payer?.address?.city?.name || 'N/A',
+          state: paymentData.payer?.address?.state?.name || 'N/A'
         },
         
         items: itemsFromMetadata.map((item: any) => ({

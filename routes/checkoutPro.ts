@@ -311,8 +311,8 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
           email: customerData?.email || 'cliente@example.com',
           phone: customerData?.phone || '',
           address: customerData?.address || '',
-          city: '',
-          state: ''
+          city: customerData?.city || 'N/A',
+          state: customerData?.state || 'N/A'
         },
         items: itemsValidados.map(iv => ({
           product_id: iv.id,
