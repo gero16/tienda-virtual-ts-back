@@ -191,6 +191,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         console.log(colors.red("      ❌ Error obteniendo token de ML:"), tokenError);
         console.log(colors.yellow("      ⚠️  Stock actualizado en BD, pero NO en MercadoLibre"));
       }
+      }
 
       // Registrar uso de cupón si existe
       if (paymentData.metadata?.cupon_codigo) {
@@ -261,7 +262,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       await session.commitTransaction();
       
       console.log(colors.green("   ✅ Orden registrada/actualizada"));
-      console.log(colors.green(`   📦 Orden ID: ${nuevaOrden.orden_id}`));
+      console.log(colors.green(`   🧾 External Reference: ${paymentData.external_reference} | Payment ID: ${paymentId}`));
 
     } catch (error) {
       await session.abortTransaction();
