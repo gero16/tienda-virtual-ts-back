@@ -223,21 +223,19 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       statement_descriptor: "TIENDA VIRTUAL",
       // Enviar notificaciones al webhook específicamente para esta preferencia
       notification_url: process.env.MP_WEBHOOK_URL || 'https://poppy-shop-production.up.railway.app/webhook/mercadopago',
-      // PROPORCIONAR ITEMS PARA EL WEBHOOK (MP los devuelve en additional_info.items)
-      additional_info: {
+      metadata: {
+        customer_email: customerData?.email,
+        customer_name: customerData?.name,
+        cupon_codigo: cupon_codigo || null,
+        cupon_descuento: descuentoCupon,
+        items_count: cartItems.length,
+        // Incluir items para que el webhook pueda procesarlos
         items: itemsValidados.map(iv => ({
           id: iv.id,
           title: iv.title,
           quantity: iv.quantity,
           unit_price: iv.unit_price
         }))
-      },
-      metadata: {
-        customer_email: customerData?.email,
-        customer_name: customerData?.name,
-        cupon_codigo: cupon_codigo || null,
-        cupon_descuento: descuentoCupon,
-        items_count: cartItems.length
       }
     };
 

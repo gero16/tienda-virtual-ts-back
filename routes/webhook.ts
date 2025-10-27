@@ -106,8 +106,29 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     session.startTransaction();
 
     try {
-      // Obtener items de la metadata
-      const metadata = paymentData.metadata || paymentData.additional_info?.items || [];
+      // Obtener items de la metadata (puede venir como objeto o string)
+      let metadata: any = paymentData.metadata || {};
+      let itemsFromMetadata: any[] = [];
+
+      try {
+        const rawItems = metadata.items || paymentData.additional_info?.items || [];
+        if (typeof rawItems === 'string') {
+          itemsFromMetadata = JSON.parse(rawItems);
+        } else if (Array.isArray(rawItems)) {
+          itemsFromMetadata = rawItems;
+        } else if (rawItems && typeof rawItems === 'object') {
+          // Caso poco común: objeto con índices
+          itemsFromMetadata = Object.values(rawItems);
+        }
+      } catch (parseErr) {
+        console.log(colors.yellow('   ⚠️ No se pudo parsear metadata.items'));
+      }
+
+      if (!itemsFromMetadata || itemsFromMetadata.length === 0) {
+        console.log(colors.red('   ❌ No se encontraron items en metadata'));
+        await session.abortTransaction();
+        return;
+      }
       
       if (!metadata || metadata.length === 0) {
         console.log(colors.red("   ❌ No se encontraron items en la metadata"));
@@ -118,7 +139,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       // Actualizar stock de los productos EN TU BD
       console.log(colors.yellow("   📦 Actualizando stock en BD local..."));
       
-      for (const item of metadata) {
+      for (const item of itemsFromMetadata) {
         const producto = await ProductoModel.findOne({ ml_id: item.id }).session(session);
         
         if (producto) {
@@ -212,7 +233,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
           address: paymentData.payer?.address?.street_name || ""
         },
         
-        items: metadata.map((item: any) => ({
+        items: itemsFromMetadata.map((item: any) => ({
           product_id: item.id,
           product_name: item.title,
           quantity: item.quantity,
