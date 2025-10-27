@@ -6,6 +6,7 @@ import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden";
 import CuponModel from "../models/Cupon";
 import { getCurrentToken, updateStockInMercadoLibre, propagateStockToGroup } from "./mercadolibre";
+import AdminNotification from "../models/AdminNotification";
 
 const router = Router();
 
@@ -251,12 +252,15 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         date_created: new Date(),
         date_updated: new Date()
       };
+      let finalOrderId: string | undefined;
       if (ordenExistente) {
         await Orden.updateOne({ _id: ordenExistente._id }, baseOrden, { session });
+        finalOrderId = ordenExistente.orden_id;
         console.log(colors.green("   ♻️ Orden actualizada"));
       } else {
         const nuevaOrden = new Orden(baseOrden);
         await nuevaOrden.save({ session });
+        finalOrderId = nuevaOrden.orden_id;
         console.log(colors.green("   ✅ Orden creada"));
       }
 
@@ -265,6 +269,22 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       
       console.log(colors.green("   ✅ Orden registrada/actualizada"));
       console.log(colors.green(`   🧾 External Reference: ${paymentData.external_reference} | Payment ID: ${paymentId}`));
+
+      // Notificación admin para cualquier estado
+      try {
+        await AdminNotification.create({
+          type: 'order',
+          status: 'unread',
+          message: `Orden ${paymentData.status.toUpperCase()} - ${paymentData.transaction_amount} ${paymentData.currency_id}`,
+          order_id: finalOrderId,
+          payment_id: paymentId?.toString?.(),
+          customer_email: paymentData.payer?.email || undefined,
+          total: Number(paymentData.transaction_amount || 0),
+          currency: paymentData.currency_id || undefined
+        });
+      } catch (nErr) {
+        console.log(colors.yellow('⚠️ No se pudo crear notificación admin (webhook)'), nErr);
+      }
 
     } catch (error) {
       await session.abortTransaction();

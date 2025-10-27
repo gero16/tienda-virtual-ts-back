@@ -4,6 +4,7 @@ import colors from "colors";
 import mongoose from "mongoose";
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden";
+import AdminNotification from "../models/AdminNotification";
 import { getCurrentToken } from "./mercadolibre";
 import CuponModel from "../models/Cupon";
 
@@ -296,7 +297,7 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
 
     // 🆕 Crear orden en estado pending (iniciada) para trazabilidad
     try {
-      await Orden.create({
+      const ordenPending = await Orden.create({
         orden_id: `ORD-${Date.now()}`,
         external_reference,
         numero_orden: `ORD-${Date.now()}`,
@@ -332,9 +333,26 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
         } : undefined,
         total: totalFinal,
         currency: targetCurrency,
-        status: 'pending'
+        status: 'pending',
+        notes: `Checkout Pro preference created. pref_id=${response.body.id}`
       });
       console.log(colors.green('💾 Orden pending registrada (preference_created)'));
+
+      // Notificación admin
+      try {
+        await AdminNotification.create({
+          type: 'order',
+          status: 'unread',
+          message: `Orden iniciada (Checkout Pro) - ${targetCurrency} ${totalFinal} - pref ${response.body.id}`,
+          order_id: ordenPending.orden_id,
+          payment_id: response.body.id?.toString?.(),
+          customer_email: customerData?.email || undefined,
+          total: totalFinal,
+          currency: targetCurrency
+        });
+      } catch (nErr) {
+        console.log(colors.yellow('⚠️ No se pudo crear notificación admin (pending)'), nErr);
+      }
     } catch (ordErr) {
       console.log(colors.yellow('⚠️ No se pudo registrar orden pending'), ordErr);
     }
