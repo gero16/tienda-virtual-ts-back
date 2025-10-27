@@ -85,21 +85,18 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       console.log(colors.green("   ✅ Pago de PRODUCCIÓN detectado, se procesará normalmente"));
     }
 
-    // Solo procesar pagos aprobados
-    if (paymentData.status !== "approved") {
-      console.log(colors.yellow(`   ⚠️  Pago no aprobado (${paymentData.status}), no se procesa`));
-      return;
-    }
+    // Procesar cualquier estado
+    console.log(colors.yellow(`   🔄 Procesando estado: ${paymentData.status}`));
 
-    // Verificar si ya procesamos este pago
-    const ordenExistente = await Orden.findOne({ payment_id: paymentId.toString() });
-    
-    if (ordenExistente) {
-      console.log(colors.yellow(`   ⚠️  Pago ya procesado anteriormente`));
-      return;
-    }
+    // Verificar si ya existe por payment_id o external_reference
+    const ordenExistente = await Orden.findOne({
+      $or: [
+        { payment_id: paymentId.toString() },
+        { external_reference: paymentData.external_reference }
+      ]
+    });
 
-    console.log(colors.green("   ✅ Pago aprobado, procesando orden..."));
+    console.log(colors.green("   ✅ Registrando/actualizando orden..."));
 
     // Iniciar transacción de MongoDB
     const session = await mongoose.startSession();
@@ -136,27 +133,26 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         return;
       }
 
-      // Actualizar stock de los productos EN TU BD
-      console.log(colors.yellow("   📦 Actualizando stock en BD local..."));
-      
-      for (const item of itemsFromMetadata) {
-        const producto = await ProductoModel.findOne({ ml_id: item.id }).session(session);
-        
-        if (producto) {
-          const nuevoStock = producto.available_quantity - item.quantity;
-          
-          await ProductoModel.updateOne(
-            { ml_id: item.id },
-            { $set: { available_quantity: Math.max(0, nuevoStock) } },
-            { session }
-          );
-
-          console.log(colors.green(`      ✅ BD Local - ${item.title}: ${producto.available_quantity} → ${nuevoStock}`));
+      // Si es approved, actualizar stock en BD
+      if (paymentData.status === 'approved') {
+        console.log(colors.yellow("   📦 Actualizando stock en BD local..."));
+        for (const item of itemsFromMetadata) {
+          const producto = await ProductoModel.findOne({ ml_id: item.id }).session(session);
+          if (producto) {
+            const nuevoStock = producto.available_quantity - item.quantity;
+            await ProductoModel.updateOne(
+              { ml_id: item.id },
+              { $set: { available_quantity: Math.max(0, nuevoStock) } },
+              { session }
+            );
+            console.log(colors.green(`      ✅ BD Local - ${item.title}: ${producto.available_quantity} → ${nuevoStock}`));
+          }
         }
       }
 
-      // 🔥 IMPORTANTE: Actualizar stock EN MERCADOLIBRE de tus clientes
-      console.log(colors.yellow("   🛍️  Actualizando stock en MercadoLibre..."));
+      // 🔥 IMPORTANTE: Actualizar stock EN MERCADOLIBRE solo si approved
+      if (paymentData.status === 'approved') {
+        console.log(colors.yellow("   🛍️  Actualizando stock en MercadoLibre..."));
       
       try {
         const token = await getCurrentToken();
@@ -164,7 +160,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         if (token) {
           console.log(colors.blue("      🔑 Token de MercadoLibre obtenido"));
           
-          for (const item of metadata) {
+          for (const item of itemsFromMetadata) {
             const producto = await ProductoModel.findOne({ ml_id: item.id });
             
             if (producto) {
@@ -214,8 +210,8 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         }
       }
 
-      // Crear registro de la orden
-      const nuevaOrden = new Orden({
+      // Crear o actualizar registro de la orden
+      const baseOrden: any = {
         orden_id: `ORD-${Date.now()}`,
         external_reference: paymentData.external_reference,
         numero_orden: `ORD-${Date.now()}`,
@@ -251,14 +247,20 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         
         date_created: new Date(),
         date_updated: new Date()
-      });
-
-      await nuevaOrden.save({ session });
+      };
+      if (ordenExistente) {
+        await Orden.updateOne({ _id: ordenExistente._id }, baseOrden, { session });
+        console.log(colors.green("   ♻️ Orden actualizada"));
+      } else {
+        const nuevaOrden = new Orden(baseOrden);
+        await nuevaOrden.save({ session });
+        console.log(colors.green("   ✅ Orden creada"));
+      }
 
       // Confirmar transacción
       await session.commitTransaction();
       
-      console.log(colors.green("   ✅ Orden procesada exitosamente"));
+      console.log(colors.green("   ✅ Orden registrada/actualizada"));
       console.log(colors.green(`   📦 Orden ID: ${nuevaOrden.orden_id}`));
 
     } catch (error) {
