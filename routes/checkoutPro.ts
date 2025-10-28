@@ -355,6 +355,17 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       }
     } catch (ordErr) {
       console.log(colors.yellow('⚠️ No se pudo registrar orden pending'), ordErr);
+      // Notificar también errores al admin como evento de sistema
+      try {
+        const errorMessage = (ordErr instanceof Error) ? ordErr.message : String(ordErr);
+        await AdminNotification.create({
+          type: 'system',
+          status: 'unread',
+          message: `Error registrando orden pending: ${errorMessage}`,
+          total: totalFinal,
+          currency: targetCurrency
+        });
+      } catch {}
     }
 
     return res.json({

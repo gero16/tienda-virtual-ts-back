@@ -250,7 +250,9 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         } : undefined,
         
         date_created: new Date(),
-        date_updated: new Date()
+        date_updated: new Date(),
+        // 📝 Detalle diagnóstico
+        notes: `estado=${paymentData.status}; detalle=${paymentData.status_detail}; metodo=${paymentData.payment_method_id}; tipo=${paymentData.payment_type_id}; live_mode=${paymentData.live_mode}; ext_ref=${paymentData.external_reference}`
       };
       let finalOrderId: string | undefined;
       if (ordenExistente) {
@@ -275,7 +277,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         await AdminNotification.create({
           type: 'order',
           status: 'unread',
-          message: `Orden ${paymentData.status.toUpperCase()} - ${paymentData.transaction_amount} ${paymentData.currency_id}`,
+          message: `Orden ${paymentData.status.toUpperCase()} | detalle=${paymentData.status_detail} | metodo=${paymentData.payment_method_id}/${paymentData.payment_type_id} | total=${paymentData.transaction_amount} ${paymentData.currency_id}`,
           order_id: finalOrderId,
           payment_id: paymentId?.toString?.(),
           customer_email: paymentData.payer?.email || undefined,
