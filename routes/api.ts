@@ -516,6 +516,33 @@ router.get("/payment/:id", async (req: Request, res: Response) => {
 });
 
 // =====================
+// Métricas de performance (frontend)
+// =====================
+router.post("/metrics/perf", async (req: Request, res: Response) => {
+  try {
+    const { page, lcp, cls, measures, userAgent, url, ts } = req.body || {};
+    console.log("\n📊 Métrica frontend recibida");
+    if (page) console.log("   page:", page);
+    if (typeof lcp === 'number') console.log("   LCP:", Math.round(lcp), "ms");
+    if (typeof cls === 'number') console.log("   CLS:", cls);
+    if (Array.isArray(measures)) {
+      for (const m of measures) {
+        if (m && typeof m.name === 'string' && typeof m.duration === 'number') {
+          console.log(`   ${m.name}: ${Math.round(m.duration)}ms`);
+        }
+      }
+    }
+    if (userAgent) console.log("   UA:", String(userAgent).slice(0, 200));
+    if (url) console.log("   URL:", url);
+    if (ts) console.log("   ts:", ts);
+    return res.status(204).send();
+  } catch (e) {
+    console.error("Error registrando métricas:", e);
+    return res.status(500).json({ error: "Error registrando métricas" });
+  }
+});
+
+// =====================
 // Rutas de prueba
 // =====================
 router.get("/", (req: Request, res: Response) => {
