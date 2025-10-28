@@ -4,6 +4,8 @@ export interface IAdminNotification extends Document {
   type: "order" | "payment" | "system";
   status: "unread" | "read";
   message?: string;
+  admin_id?: string; // 🆕 propietario (admin)
+  admin_email?: string; // opcional, para mostrarse
   order_id?: string;
   payment_id?: string;
   customer_email?: string;
@@ -16,6 +18,8 @@ const AdminNotificationSchema = new Schema<IAdminNotification>({
   type: { type: String, enum: ["order", "payment", "system"], required: true },
   status: { type: String, enum: ["unread", "read"], default: "unread" },
   message: { type: String },
+  admin_id: { type: String },
+  admin_email: { type: String },
   order_id: { type: String },
   payment_id: { type: String },
   customer_email: { type: String },

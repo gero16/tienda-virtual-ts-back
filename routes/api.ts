@@ -598,15 +598,20 @@ router.get("/orders", async (req: Request, res: Response) => {
 // =====================
 // Notificaciones Admin (listar y marcar leídas)
 // =====================
-router.get("/admin/notifications", async (req: Request, res: Response) => {
+import { authenticate, authorize } from '../middleware/auth'
+router.get("/admin/notifications", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
     const skip = (page - 1) * pageSize;
-
+    // @ts-ignore
+    const user = (req.user || {}) as { id?: string, email?: string };
+    const filter = user?.id
+      ? { $or: [ { admin_id: user.id }, { admin_id: { $exists: false } } ] }
+      : {};
     const [items, total] = await Promise.all([
-      AdminNotification.find().sort({ createdAt: -1 }).skip(skip).limit(pageSize),
-      AdminNotification.countDocuments()
+      AdminNotification.find(filter).sort({ createdAt: -1 }).skip(skip).limit(pageSize),
+      AdminNotification.countDocuments(filter as any)
     ]);
 
     return res.json({ success: true, page, pageSize, total, items });
@@ -616,10 +621,18 @@ router.get("/admin/notifications", async (req: Request, res: Response) => {
   }
 });
 
-router.patch("/admin/notifications/:id/read", async (req: Request, res: Response) => {
+router.patch("/admin/notifications/:id/read", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const updated = await AdminNotification.findByIdAndUpdate(id, { status: "read" }, { new: true });
+    // Solo permitir marcar si es del admin o está sin asignar
+    // @ts-ignore
+    const user = (req.user || {}) as { id?: string };
+    const notif = await AdminNotification.findById(id);
+    if (!notif) return res.status(404).json({ error: "Notificación no encontrada" });
+    if (notif.admin_id && user?.id && notif.admin_id !== user.id) {
+      return res.status(403).json({ error: "Prohibido" });
+    }
+    const updated = await AdminNotification.findByIdAndUpdate(id, { status: "read", admin_id: notif.admin_id || user?.id, admin_email: (req as any).user?.email }, { new: true });
     if (!updated) return res.status(404).json({ error: "Notificación no encontrada" });
     return res.json({ success: true, item: updated });
   } catch (error: any) {
