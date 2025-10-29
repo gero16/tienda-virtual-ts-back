@@ -1122,6 +1122,8 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     const ALLOW_REJECTED_IN_DEV = String(process.env.ALLOW_REJECTED_IN_DEV || '').toLowerCase() === 'true'
     const isSandbox = response.body.live_mode === false
 
+    console.log("RESPUESTA DE MERCADO LIBREEEEEEEE!!!!!!", response.body.status);
+
     if (response.body.status === 'rejected' || response.body.status === 'cancelled') {
       if (ALLOW_REJECTED_IN_DEV && (process.env.NODE_ENV !== 'production' || isSandbox)) {
         console.log(colors.yellow("⚠️ Modo DEV: tratando pago rechazado como pendiente para pruebas"))
@@ -1202,13 +1204,9 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         } : undefined,
         total: transaction_amount,
         currency: 'UYU',
-        
-        // Fechas
         date_created: new Date(),
         date_approved: response.body.date_approved ? new Date(response.body.date_approved) : undefined,
-        
-        // Estado
-        status: response.body.status === 'approved' ? 'approved' : (ALLOW_PENDING_AS_APPROVED ? 'approved' : 'pending')
+        status: 'approved'
       };
 
       const nuevaOrden = new Orden(ordenData);
