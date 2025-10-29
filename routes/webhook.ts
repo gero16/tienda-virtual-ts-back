@@ -272,17 +272,43 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       console.log(colors.green("   ✅ Orden registrada/actualizada"));
       console.log(colors.green(`   🧾 External Reference: ${paymentData.external_reference} | Payment ID: ${paymentId}`));
 
-      // Notificación admin para cualquier estado
+      // Notificación admin con mensaje claro
       try {
+        const status = String(paymentData.status || '').toLowerCase()
+        const statusMap: Record<string,string> = {
+          approved: 'Pago aprobado',
+          pending: 'Pago pendiente',
+          rejected: 'Pago rechazado',
+          cancelled: 'Pago cancelado',
+          refunded: 'Pago reembolsado'
+        }
+        const friendly = statusMap[status] || `Pago ${status}`
+        const method = paymentData.payment_method_id ? String(paymentData.payment_method_id).toUpperCase() : (paymentData.payment_type_id || '')
+        const amount = Number(paymentData.transaction_amount || 0)
+        const curr = paymentData.currency_id || ''
+        const detail = String(paymentData.status_detail || '')
+        const detailMap: Record<string,string> = {
+          accredited: 'acreditado',
+          pending_contingency: 'en revisión',
+          pending_review_manual: 'en revisión manual',
+          cc_rejected_other_reason: 'motivo desconocido',
+          cc_rejected_bad_filled_security_code: 'CVV incorrecto',
+          cc_rejected_bad_filled_date: 'fecha inválida',
+          cc_rejected_bad_filled_card_number: 'número inválido',
+          cc_rejected_insufficient_amount: 'fondos insuficientes'
+        }
+        const friendlyDetail = detailMap[detail] || detail
+        const message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}`
+
         await AdminNotification.create({
           type: 'order',
           status: 'unread',
-          message: `Orden ${paymentData.status.toUpperCase()} | detalle=${paymentData.status_detail} | metodo=${paymentData.payment_method_id}/${paymentData.payment_type_id} | total=${paymentData.transaction_amount} ${paymentData.currency_id}`,
+          message,
           order_id: finalOrderId,
           payment_id: paymentId?.toString?.(),
           customer_email: paymentData.payer?.email || undefined,
-          total: Number(paymentData.transaction_amount || 0),
-          currency: paymentData.currency_id || undefined
+          total: amount,
+          currency: curr || undefined
         });
       } catch (nErr) {
         console.log(colors.yellow('⚠️ No se pudo crear notificación admin (webhook)'), nErr);

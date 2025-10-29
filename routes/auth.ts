@@ -57,7 +57,7 @@ router.post("/register", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "El email ya está registrado" });
     }
 
-    const nuevo = await Usuario.create({ nombre, email: email.toLowerCase(), password, rol: "editor" });
+    const nuevo = await Usuario.create({ nombre, email: email.toLowerCase(), password, rol: "user" });
     const token = signToken({ id: nuevo._id.toString(), email: nuevo.email, rol: nuevo.rol });
     return res.status(201).json({ token, user: { id: nuevo._id, nombre: nuevo.nombre, email: nuevo.email, rol: nuevo.rol } });
   } catch (error: any) {

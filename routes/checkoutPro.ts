@@ -343,7 +343,7 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
         await AdminNotification.create({
           type: 'order',
           status: 'unread',
-          message: `Orden iniciada (Checkout Pro) - ${targetCurrency} ${totalFinal} - pref ${response.body.id}`,
+          message: `Orden iniciada - ${targetCurrency} ${totalFinal}`,
           order_id: ordenPending.orden_id,
           payment_id: response.body.id?.toString?.(),
           customer_email: customerData?.email || undefined,
