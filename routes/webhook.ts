@@ -7,6 +7,7 @@ import Orden from "../models/Orden";
 import CuponModel from "../models/Cupon";
 import { getCurrentToken, updateStockInMercadoLibre, propagateStockToGroup } from "./mercadolibre";
 import AdminNotification from "../models/AdminNotification";
+import { ClienteService } from "../services/clienteService";
 
 const router = Router();
 
@@ -123,15 +124,14 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       }
 
       if (!itemsFromMetadata || itemsFromMetadata.length === 0) {
-        console.log(colors.red('   ❌ No se encontraron items en metadata'));
-        await session.abortTransaction();
-        return;
-      }
-      
-      if (!metadata || metadata.length === 0) {
-        console.log(colors.red("   ❌ No se encontraron items en la metadata"));
-        await session.abortTransaction();
-        return;
+        console.log(colors.yellow('   ⚠️ No se encontraron items en metadata/additional_info. Usando fallback.'));
+        // Fallback: construir un único item resumen para registrar la orden
+        itemsFromMetadata = [{
+          id: paymentData.external_reference || `ORDER-${Date.now()}`,
+          title: 'Compra en Poppy Shop',
+          quantity: 1,
+          unit_price: Number(paymentData.transaction_amount || 0)
+        }];
       }
 
       // Si es approved, actualizar stock en BD
@@ -215,7 +215,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       // Crear o actualizar registro de la orden
       const baseOrden: any = {
         orden_id: `ORD-${Date.now()}`,
-        external_reference: paymentData.external_reference,
+        external_reference: paymentData.external_reference || `ORDER-${Date.now()}`,
         numero_orden: `ORD-${Date.now()}`,
         
         payment_id: paymentId.toString(),
@@ -223,6 +223,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         payment_status_detail: paymentData.status_detail,
         transaction_amount: paymentData.transaction_amount,
         payment_method_id: paymentData.payment_method_id,
+        installments: paymentData.installments || 1,
         
         customer: {
           name: paymentData.payer?.first_name || "Cliente",
@@ -243,6 +244,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         
         subtotal: paymentData.transaction_amount,
         total: paymentData.transaction_amount,
+        currency: paymentData.currency_id || 'UYU',
         
         cupon: paymentData.metadata?.cupon_codigo ? {
           codigo: paymentData.metadata.cupon_codigo,
@@ -271,6 +273,24 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       
       console.log(colors.green("   ✅ Orden registrada/actualizada"));
       console.log(colors.green(`   🧾 External Reference: ${paymentData.external_reference} | Payment ID: ${paymentId}`));
+
+      // 👤 Crear o actualizar cliente asociado a la orden
+      try {
+        const cliente = await ClienteService.crearOActualizarDesdeOrden({
+          name: baseOrden.customer.name,
+          email: baseOrden.customer.email,
+          phone: baseOrden.customer.phone,
+          address: baseOrden.customer.address,
+          city: baseOrden.customer.city,
+          state: baseOrden.customer.state
+        });
+        if (String(paymentData.status).toLowerCase() === 'approved') {
+          await ClienteService.actualizarEstadisticasCompra(cliente._id.toString(), Number(paymentData.transaction_amount || 0));
+        }
+        console.log(colors.green("   👤 Cliente creado/actualizado desde webhook"));
+      } catch (clienteErr) {
+        console.log(colors.yellow('   ⚠️ No se pudo crear/actualizar cliente desde webhook'), clienteErr);
+      }
 
       // Notificación admin con mensaje claro
       try {
