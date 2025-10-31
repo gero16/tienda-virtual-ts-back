@@ -1,7 +1,7 @@
 import { Schema, model, Document } from "mongoose";
 import bcrypt from "bcryptjs";
 
-export type UsuarioRol = "admin" | "manager" | "editor";
+export type UsuarioRol = "admin" | "manager" | "editor" | "user";
 
 export interface IUsuario extends Document {
   nombre: string;
@@ -26,7 +26,7 @@ const UsuarioSchema = new Schema<IUsuario>(
       match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,})+$/, "Email inválido"],
     },
     password: { type: String, required: true, minlength: 6 },
-    rol: { type: String, enum: ["admin", "manager", "editor"], default: "admin" },
+    rol: { type: String, enum: ["admin", "manager", "editor", "user"], default: "user" },
     activo: { type: Boolean, default: true },
     date_created: { type: Date, default: Date.now },
     date_updated: { type: Date, default: Date.now },
