@@ -2,6 +2,8 @@ import express, { Router, Request, Response } from "express";
 import colors from "colors";
 import CuponModel from "../models/Cupon";
 import { authenticate, authorize } from "../middleware/auth";
+import { ClienteService } from "../services/clienteService";
+import Orden from "../models/Orden";
 
 const router = Router();
 
@@ -198,6 +200,39 @@ router.post("/validar", async (req: Request, res: Response) => {
         return res.status(400).json({ 
           valido: false,
           error: "Ya has usado este cupón el máximo de veces permitidas" 
+        });
+      }
+    }
+
+    // Validaciones especiales para cupón POPPYWEB
+    if (codigoUpperCase === 'POPPYWEB' && email_usuario) {
+      // Verificar que el cliente esté registrado
+      try {
+        const cliente = await ClienteService.obtenerClientePorEmail(email_usuario);
+        if (!cliente) {
+          return res.status(400).json({ 
+            valido: false,
+            error: "Este cupón solo es válido para clientes registrados. Por favor regístrate primero." 
+          });
+        }
+
+        // Verificar que sea su primera compra (buscar órdenes aprobadas anteriores)
+        const ordenesAnteriores = await Orden.countDocuments({
+          'customer.email': email_usuario.toLowerCase(),
+          status: 'approved'
+        });
+
+        if (ordenesAnteriores > 0) {
+          return res.status(400).json({ 
+            valido: false,
+            error: "Este cupón solo es válido para la primera compra de clientes registrados." 
+          });
+        }
+      } catch (error: any) {
+        console.error(colors.red("Error validando cliente para cupón POPPYWEB:"), error);
+        return res.status(500).json({ 
+          valido: false,
+          error: "Error al validar los requisitos del cupón. Por favor intenta de nuevo." 
         });
       }
     }

@@ -7,6 +7,7 @@ import Orden from "../models/Orden";
 import AdminNotification from "../models/AdminNotification";
 import { getCurrentToken } from "./mercadolibre";
 import CuponModel from "../models/Cupon";
+import { ClienteService } from "../services/clienteService";
 
 const router = Router();
 
@@ -61,6 +62,39 @@ const validarCuponEnBackend = async (
         return { 
           valido: false, 
           error: "Ya has usado este cupón el máximo de veces permitidas" 
+        };
+      }
+    }
+
+    // Validaciones especiales para cupón POPPYWEB
+    if (codigoUpperCase === 'POPPYWEB' && emailUsuario) {
+      // Verificar que el cliente esté registrado
+      try {
+        const cliente = await ClienteService.obtenerClientePorEmail(emailUsuario);
+        if (!cliente) {
+          return { 
+            valido: false, 
+            error: "Este cupón solo es válido para clientes registrados. Por favor regístrate primero." 
+          };
+        }
+
+        // Verificar que sea su primera compra (buscar órdenes aprobadas anteriores)
+        const ordenesAnteriores = await Orden.countDocuments({
+          'customer.email': emailUsuario.toLowerCase(),
+          status: 'approved'
+        });
+
+        if (ordenesAnteriores > 0) {
+          return { 
+            valido: false, 
+            error: "Este cupón solo es válido para la primera compra de clientes registrados." 
+          };
+        }
+      } catch (error: any) {
+        console.error(colors.red("Error validando cliente para cupón POPPYWEB:"), error);
+        return { 
+          valido: false, 
+          error: "Error al validar los requisitos del cupón. Por favor intenta de nuevo." 
         };
       }
     }
