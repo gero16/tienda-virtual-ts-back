@@ -27,6 +27,8 @@ export interface IOrden extends Document {
   // Productos comprados
   items: Array<{
     product_id: string;
+    ml_id?: string; // ID de MercadoLibre
+    sku?: string; // SKU del producto
     product_name: string;
     variant_id?: string;
     color?: string;
@@ -94,6 +96,8 @@ const OrdenSchema = new Schema<IOrden>({
   // Productos comprados
   items: [{
     product_id: { type: String, required: true },
+    ml_id: { type: String }, // ID de MercadoLibre
+    sku: { type: String }, // SKU del producto
     product_name: { type: String, required: true },
     variant_id: { type: String },
     color: { type: String },

@@ -251,9 +251,12 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
                            paymentData.payer?.email || 
                            "cliente@example.com";
       
-      // Extraer teléfono del cliente
+      // Extraer teléfono del cliente (buscar en múltiples lugares)
       let customerPhone = "";
-      if (paymentData.payer?.phone) {
+      // Primero intentar desde metadata
+      if (metadata.customer_phone) {
+        customerPhone = String(metadata.customer_phone);
+      } else if (paymentData.payer?.phone) {
         if (typeof paymentData.payer.phone === 'string') {
           customerPhone = paymentData.payer.phone;
         } else if (paymentData.payer.phone.number) {
@@ -319,12 +322,32 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
           state: customerState
         },
         
-        items: itemsFromMetadata.map((item: any) => ({
-          product_id: item.id || item.product_id || 'unknown',
-          product_name: item.title || item.product_name || 'Producto',
-          quantity: item.quantity || 1,
-          unit_price: item.unit_price || 0,
-          total_price: (item.quantity || 1) * (item.unit_price || 0)
+        items: await Promise.all(itemsFromMetadata.map(async (item: any) => {
+          // Obtener ml_id y SKU del producto desde la BD si no están en los metadatos
+          const mlId = item.ml_id || item.id || item.product_id || 'unknown';
+          let sku = item.sku || null;
+          
+          // Si no tenemos el SKU en los metadatos, buscarlo en la BD
+          if (!sku && mlId !== 'unknown') {
+            try {
+              const producto = await ProductoModel.findOne({ ml_id: mlId });
+              if (producto?.seller_sku) {
+                sku = producto.seller_sku;
+              }
+            } catch (err) {
+              console.log(colors.yellow(`   ⚠️ No se pudo buscar SKU para producto ${mlId}`));
+            }
+          }
+          
+          return {
+            product_id: mlId, // ml_id de MercadoLibre
+            ml_id: mlId, // También guardar como ml_id explícito
+            sku: sku, // SKU del producto
+            product_name: item.title || item.product_name || 'Producto',
+            quantity: item.quantity || 1,
+            unit_price: item.unit_price || 0,
+            total_price: (item.quantity || 1) * (item.unit_price || 0)
+          };
         })),
         
         subtotal: subtotal,

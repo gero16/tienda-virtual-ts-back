@@ -292,6 +292,30 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
 
     const external_reference = `ORDER-${Date.now()}`;
     
+    // Buscar SKUs de los productos antes de crear los metadatos
+    const itemsConSKU = await Promise.all(itemsValidados.map(async (iv) => {
+      try {
+        const producto = await ProductoModel.findOne({ ml_id: iv.id });
+        return {
+          id: iv.id, // ml_id
+          title: iv.title,
+          quantity: iv.quantity,
+          unit_price: iv.unit_price,
+          ml_id: iv.id, // ml_id explícito
+          sku: producto?.seller_sku || null
+        };
+      } catch {
+        return {
+          id: iv.id,
+          title: iv.title,
+          quantity: iv.quantity,
+          unit_price: iv.unit_price,
+          ml_id: iv.id,
+          sku: null
+        };
+      }
+    }));
+
     const preference = {
       items: itemsParaMercadoPago,
       payer: {
@@ -320,16 +344,12 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       metadata: {
         customer_email: customerData?.email,
         customer_name: customerData?.name,
+        customer_phone: customerData?.phone || '',
         cupon_codigo: cupon_codigo || null,
         cupon_descuento: descuentoCupon,
         items_count: cartItems.length,
-        // Incluir items para que el webhook pueda procesarlos
-        items: itemsValidados.map(iv => ({
-          id: iv.id,
-          title: iv.title,
-          quantity: iv.quantity,
-          unit_price: iv.unit_price
-        }))
+        // Incluir items para que el webhook pueda procesarlos (con ml_id y SKU)
+        items: itemsConSKU
       }
     };
 
