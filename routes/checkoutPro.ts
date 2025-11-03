@@ -322,7 +322,7 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
           unit_price: iv.unit_price,
           total_price: iv.quantity * iv.unit_price
         })),
-        subtotal: totalFinal,
+        subtotal: totalCalculado, // Subtotal antes del descuento
         descuento_cupon: descuentoCupon,
         cupon_aplicado: cuponValidado ? {
           codigo: cuponValidado.codigo,
@@ -331,7 +331,7 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
           valor: cuponValidado.valor_descuento,
           descuento_total: descuentoCupon
         } : undefined,
-        total: totalFinal,
+        total: totalFinal, // Total después del descuento
         currency: targetCurrency,
         status: 'pending',
         notes: `Checkout Pro preference created. pref_id=${response.body.id}`

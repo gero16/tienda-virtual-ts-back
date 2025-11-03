@@ -110,7 +110,12 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       let itemsFromMetadata: any[] = [];
 
       try {
-        const rawItems = metadata.items || paymentData.additional_info?.items || [];
+        // Intentar múltiples fuentes para obtener los items
+        const rawItems = metadata.items || 
+                        paymentData.additional_info?.items || 
+                        paymentData.items || 
+                        [];
+        
         if (typeof rawItems === 'string') {
           itemsFromMetadata = JSON.parse(rawItems);
         } else if (Array.isArray(rawItems)) {
@@ -194,29 +199,109 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       }
       }
 
-      // Registrar uso de cupón si existe
+      // Obtener información del cupón si existe
+      let cuponInfo: any = null;
+      let descuentoCupon = 0;
+      
       if (paymentData.metadata?.cupon_codigo) {
         const cupon = await CuponModel.findOne({ 
-          codigo: paymentData.metadata.cupon_codigo.toUpperCase() 
+          codigo: String(paymentData.metadata.cupon_codigo).toUpperCase().trim()
         }).session(session);
 
         if (cupon) {
+          // Registrar uso del cupón
           cupon.usos_actuales += 1;
           
-          if (paymentData.payer?.email) {
-            cupon.usuarios_usados.push(paymentData.payer.email);
+          if (paymentData.payer?.email || metadata.customer_email) {
+            const emailCliente = paymentData.payer?.email || metadata.customer_email;
+            cupon.usuarios_usados.push(emailCliente);
           }
 
           await cupon.save({ session });
           console.log(colors.green(`   🎟️ Cupón ${cupon.codigo} registrado`));
+          
+          // Guardar información completa del cupón
+          descuentoCupon = Number(paymentData.metadata.cupon_descuento || 0);
+          cuponInfo = {
+            codigo: cupon.codigo,
+            descripcion: cupon.descripcion,
+            tipo: cupon.tipo_descuento,
+            valor: cupon.valor_descuento,
+            descuento_total: descuentoCupon
+          };
+        } else {
+          // Si hay cupón en metadata pero no se encuentra en BD, usar los datos de metadata
+          descuentoCupon = Number(paymentData.metadata.cupon_descuento || 0);
+          console.log(colors.yellow(`   ⚠️ Cupón ${paymentData.metadata.cupon_codigo} no encontrado en BD, usando datos de metadata`));
         }
       }
 
+      // Extraer nombre completo del cliente
+      let customerName = "Cliente";
+      if (metadata.customer_name) {
+        customerName = metadata.customer_name;
+      } else if (paymentData.payer) {
+        const firstName = paymentData.payer.first_name || '';
+        const lastName = paymentData.payer.last_name || '';
+        customerName = `${firstName} ${lastName}`.trim() || customerName;
+      }
+      
+      // Extraer email del cliente
+      const customerEmail = metadata.customer_email || 
+                           paymentData.payer?.email || 
+                           "cliente@example.com";
+      
+      // Extraer teléfono del cliente
+      let customerPhone = "";
+      if (paymentData.payer?.phone) {
+        if (typeof paymentData.payer.phone === 'string') {
+          customerPhone = paymentData.payer.phone;
+        } else if (paymentData.payer.phone.number) {
+          customerPhone = String(paymentData.payer.phone.number);
+          if (paymentData.payer.phone.area_code) {
+            customerPhone = `${paymentData.payer.phone.area_code}${customerPhone}`;
+          }
+        }
+      }
+      
+      // Extraer dirección del cliente
+      let customerAddress = "";
+      let customerCity = 'N/A';
+      let customerState = 'N/A';
+      
+      if (paymentData.payer?.address) {
+        if (typeof paymentData.payer.address === 'string') {
+          customerAddress = paymentData.payer.address;
+        } else {
+          customerAddress = paymentData.payer.address.street_name || "";
+          if (paymentData.payer.address.street_number) {
+            customerAddress += ` ${paymentData.payer.address.street_number}`;
+          }
+          customerCity = paymentData.payer.address.city?.name || 'N/A';
+          customerState = paymentData.payer.address.state?.name || 'N/A';
+        }
+      }
+      
+      // Calcular subtotal (antes del descuento)
+      const subtotal = paymentData.transaction_amount + descuentoCupon;
+      
+      // Mapear status del pago al status de la orden
+      let orderStatus: 'pending' | 'approved' | 'rejected' | 'cancelled' = 'pending';
+      if (paymentData.status === 'approved') {
+        orderStatus = 'approved';
+      } else if (paymentData.status === 'rejected' || paymentData.status === 'cancelled') {
+        orderStatus = paymentData.status as 'rejected' | 'cancelled';
+      }
+      
+      // Generar orden_id y numero_orden si no existen
+      const ordenId = ordenExistente ? ordenExistente.orden_id : `ORD-${Date.now()}`;
+      const numeroOrden = ordenExistente ? (ordenExistente.numero_orden || ordenId) : ordenId;
+      
       // Crear o actualizar registro de la orden
       const baseOrden: any = {
-        orden_id: `ORD-${Date.now()}`,
+        orden_id: ordenId,
         external_reference: paymentData.external_reference || `ORDER-${Date.now()}`,
-        numero_orden: `ORD-${Date.now()}`,
+        numero_orden: numeroOrden,
         
         payment_id: paymentId.toString(),
         payment_status: paymentData.status,
@@ -226,39 +311,41 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         installments: paymentData.installments || 1,
         
         customer: {
-          name: paymentData.payer?.first_name || "Cliente",
-          email: paymentData.payer?.email || "cliente@example.com",
-          phone: paymentData.payer?.phone?.number || "",
-          address: paymentData.payer?.address?.street_name || "",
-          city: paymentData.payer?.address?.city?.name || 'N/A',
-          state: paymentData.payer?.address?.state?.name || 'N/A'
+          name: customerName,
+          email: customerEmail,
+          phone: customerPhone,
+          address: customerAddress,
+          city: customerCity,
+          state: customerState
         },
         
         items: itemsFromMetadata.map((item: any) => ({
-          product_id: item.id,
-          product_name: item.title,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          total_price: item.quantity * item.unit_price
+          product_id: item.id || item.product_id || 'unknown',
+          product_name: item.title || item.product_name || 'Producto',
+          quantity: item.quantity || 1,
+          unit_price: item.unit_price || 0,
+          total_price: (item.quantity || 1) * (item.unit_price || 0)
         })),
         
-        subtotal: paymentData.transaction_amount,
+        subtotal: subtotal,
+        descuento_cupon: descuentoCupon,
+        cupon_aplicado: cuponInfo || undefined,
         total: paymentData.transaction_amount,
         currency: paymentData.currency_id || 'UYU',
+        status: orderStatus,
         
-        cupon: paymentData.metadata?.cupon_codigo ? {
-          codigo: paymentData.metadata.cupon_codigo,
-          descuento: paymentData.metadata.cupon_descuento || 0
-        } : undefined,
-        
-        date_created: new Date(),
+        date_created: ordenExistente ? ordenExistente.date_created : new Date(),
         date_updated: new Date(),
+        date_approved: paymentData.status === 'approved' && paymentData.date_approved 
+          ? new Date(paymentData.date_approved) 
+          : (ordenExistente?.date_approved || undefined),
         // 📝 Detalle diagnóstico
         notes: `estado=${paymentData.status}; detalle=${paymentData.status_detail}; metodo=${paymentData.payment_method_id}; tipo=${paymentData.payment_type_id}; live_mode=${paymentData.live_mode}; ext_ref=${paymentData.external_reference}`
       };
       let finalOrderId: string | undefined;
       if (ordenExistente) {
-        await Orden.updateOne({ _id: ordenExistente._id }, baseOrden, { session });
+        // Usar $set para actualizar solo los campos necesarios
+        await Orden.updateOne({ _id: ordenExistente._id }, { $set: baseOrden }, { session });
         finalOrderId = ordenExistente.orden_id;
         console.log(colors.green("   ♻️ Orden actualizada"));
       } else {
@@ -274,22 +361,29 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       console.log(colors.green("   ✅ Orden registrada/actualizada"));
       console.log(colors.green(`   🧾 External Reference: ${paymentData.external_reference} | Payment ID: ${paymentId}`));
 
-      // 👤 Crear o actualizar cliente asociado a la orden
-      try {
-        const cliente = await ClienteService.crearOActualizarDesdeOrden({
-          name: baseOrden.customer.name,
-          email: baseOrden.customer.email,
-          phone: baseOrden.customer.phone,
-          address: baseOrden.customer.address,
-          city: baseOrden.customer.city,
-          state: baseOrden.customer.state
-        });
-        if (String(paymentData.status).toLowerCase() === 'approved') {
-          await ClienteService.actualizarEstadisticasCompra(cliente._id.toString(), Number(paymentData.transaction_amount || 0));
+      // 👤 Crear o actualizar cliente asociado a la orden (fuera de la transacción para no bloquear)
+      // Solo crear si el email es válido (no es el default)
+      if (baseOrden.customer.email && 
+          baseOrden.customer.email !== 'cliente@example.com' && 
+          baseOrden.customer.email.includes('@')) {
+        try {
+          const cliente = await ClienteService.crearOActualizarDesdeOrden({
+            name: baseOrden.customer.name,
+            email: baseOrden.customer.email,
+            phone: baseOrden.customer.phone,
+            address: baseOrden.customer.address,
+            city: baseOrden.customer.city,
+            state: baseOrden.customer.state
+          });
+          if (String(paymentData.status).toLowerCase() === 'approved') {
+            await ClienteService.actualizarEstadisticasCompra(cliente._id.toString(), Number(paymentData.transaction_amount || 0));
+          }
+          console.log(colors.green(`   👤 Cliente creado/actualizado desde webhook: ${cliente.email}`));
+        } catch (clienteErr: any) {
+          console.log(colors.yellow('   ⚠️ No se pudo crear/actualizar cliente desde webhook:'), clienteErr?.message || clienteErr);
         }
-        console.log(colors.green("   👤 Cliente creado/actualizado desde webhook"));
-      } catch (clienteErr) {
-        console.log(colors.yellow('   ⚠️ No se pudo crear/actualizar cliente desde webhook'), clienteErr);
+      } else {
+        console.log(colors.yellow(`   ⚠️ Email inválido o faltante, no se creará cliente: ${baseOrden.customer.email}`));
       }
 
       // Notificación admin con mensaje claro
