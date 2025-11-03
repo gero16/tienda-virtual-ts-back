@@ -390,6 +390,11 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
           baseOrden.customer.email !== 'cliente@example.com' && 
           baseOrden.customer.email.includes('@')) {
         try {
+          console.log(colors.yellow(`   👤 Intentando crear/actualizar cliente: ${baseOrden.customer.email}`));
+          console.log(colors.cyan(`      Nombre: ${baseOrden.customer.name || 'N/A'}`));
+          console.log(colors.cyan(`      Teléfono: ${baseOrden.customer.phone || 'N/A'}`));
+          console.log(colors.cyan(`      Dirección: ${baseOrden.customer.address || 'N/A'}`));
+          
           const cliente = await ClienteService.crearOActualizarDesdeOrden({
             name: baseOrden.customer.name,
             email: baseOrden.customer.email,
@@ -398,15 +403,26 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
             city: baseOrden.customer.city,
             state: baseOrden.customer.state
           });
+          
           if (String(paymentData.status).toLowerCase() === 'approved') {
             await ClienteService.actualizarEstadisticasCompra(cliente._id.toString(), Number(paymentData.transaction_amount || 0));
+            console.log(colors.green(`      ✅ Estadísticas de compra actualizadas`));
           }
-          console.log(colors.green(`   👤 Cliente creado/actualizado desde webhook: ${cliente.email}`));
+          
+          console.log(colors.green(`   ✅ Cliente creado/actualizado exitosamente: ${cliente.email}`));
+          console.log(colors.green(`      ID: ${cliente._id}`));
+          console.log(colors.green(`      Nombre: ${cliente.nombre} ${cliente.apellido}`));
         } catch (clienteErr: any) {
-          console.log(colors.yellow('   ⚠️ No se pudo crear/actualizar cliente desde webhook:'), clienteErr?.message || clienteErr);
+          console.log(colors.red('   ❌ Error al crear/actualizar cliente desde webhook:'));
+          console.log(colors.red(`      Email: ${baseOrden.customer.email}`));
+          console.log(colors.red(`      Error: ${clienteErr?.message || clienteErr}`));
+          if (clienteErr?.stack) {
+            console.log(colors.red(`      Stack: ${clienteErr.stack.split('\n').slice(0, 3).join('\n')}`));
+          }
         }
       } else {
-        console.log(colors.yellow(`   ⚠️ Email inválido o faltante, no se creará cliente: ${baseOrden.customer.email}`));
+        console.log(colors.yellow(`   ⚠️ Email inválido o faltante, no se creará cliente:`));
+        console.log(colors.yellow(`      Email recibido: ${baseOrden.customer.email || 'undefined'}`));
       }
 
       // Notificación admin con mensaje claro (evitar duplicados)

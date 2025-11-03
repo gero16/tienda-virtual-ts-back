@@ -281,13 +281,35 @@ export class ClienteService {
       const [nombre, ...apellidos] = datosCliente.name.split(' ');
       const apellido = apellidos.join(' ');
 
-      // Buscar cliente existente
+      // Normalizar y validar teléfono
+      let telefono = (datosCliente.phone || '').trim();
+      // Si el teléfono está vacío o no cumple con el formato, usar un valor por defecto válido
+      if (!telefono || !/^[0-9+\-\s()]+$/.test(telefono)) {
+        telefono = '099999999'; // Teléfono por defecto válido para Uruguay
+      }
+
+      // Normalizar dirección y ciudad
+      const calle = (datosCliente.address || '').trim() || 'Dirección no proporcionada';
+      const ciudad = (datosCliente.city || '').trim() || 'N/A';
+      const departamento = (datosCliente.state || '').trim() || 'N/A';
+
+      // Buscar cliente existente por email
       let cliente = await Cliente.findOne({
-        email: datosCliente.email.toLowerCase()
+        email: datosCliente.email.toLowerCase().trim()
       });
 
       if (cliente) {
         // Actualizar datos si el cliente existe
+        // Actualizar teléfono solo si el actual está vacío o es el default y tenemos uno mejor
+        if ((!cliente.telefono || cliente.telefono === '099999999') && telefono !== '099999999') {
+          cliente.telefono = telefono;
+        }
+        // Actualizar dirección si no tiene una válida
+        if ((!cliente.direccion.calle || cliente.direccion.calle === 'Dirección no proporcionada') && calle !== 'Dirección no proporcionada') {
+          cliente.direccion.calle = calle;
+          cliente.direccion.ciudad = ciudad;
+          cliente.direccion.departamento = departamento;
+        }
         cliente.ultima_actividad = new Date();
         await cliente.save();
         return cliente;
@@ -296,14 +318,14 @@ export class ClienteService {
         const nuevoCliente = new Cliente({
           nombre: nombre || 'Sin nombre',
           apellido: apellido || 'Sin apellido',
-          email: datosCliente.email.toLowerCase(),
-          telefono: datosCliente.phone,
+          email: datosCliente.email.toLowerCase().trim(),
+          telefono: telefono,
           direccion: {
-            calle: datosCliente.address,
+            calle: calle,
             numero: '1', // Valor por defecto si no se puede extraer
             codigo_postal: '00000', // Valor por defecto
-            ciudad: datosCliente.city,
-            departamento: datosCliente.state,
+            ciudad: ciudad,
+            departamento: departamento,
             pais: 'Uruguay'
           }
         });
