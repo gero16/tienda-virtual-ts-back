@@ -386,44 +386,61 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         console.log(colors.yellow(`   ⚠️ Email inválido o faltante, no se creará cliente: ${baseOrden.customer.email}`));
       }
 
-      // Notificación admin con mensaje claro
+      // Notificación admin con mensaje claro (evitar duplicados)
       try {
-        const status = String(paymentData.status || '').toLowerCase()
-        const statusMap: Record<string,string> = {
-          approved: 'Pago aprobado',
-          pending: 'Pago pendiente',
-          rejected: 'Pago rechazado',
-          cancelled: 'Pago cancelado',
-          refunded: 'Pago reembolsado'
-        }
-        const friendly = statusMap[status] || `Pago ${status}`
-        const method = paymentData.payment_method_id ? String(paymentData.payment_method_id).toUpperCase() : (paymentData.payment_type_id || '')
-        const amount = Number(paymentData.transaction_amount || 0)
-        const curr = paymentData.currency_id || ''
-        const detail = String(paymentData.status_detail || '')
-        const detailMap: Record<string,string> = {
-          accredited: 'acreditado',
-          pending_contingency: 'en revisión',
-          pending_review_manual: 'en revisión manual',
-          cc_rejected_other_reason: 'motivo desconocido',
-          cc_rejected_bad_filled_security_code: 'CVV incorrecto',
-          cc_rejected_bad_filled_date: 'fecha inválida',
-          cc_rejected_bad_filled_card_number: 'número inválido',
-          cc_rejected_insufficient_amount: 'fondos insuficientes'
-        }
-        const friendlyDetail = detailMap[detail] || detail
-        const message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}`
-
-        await AdminNotification.create({
-          type: 'order',
-          status: 'unread',
-          message,
-          order_id: finalOrderId,
+        // Verificar si ya existe una notificación para este payment_id con este estado
+        const existingNotification = await AdminNotification.findOne({
           payment_id: paymentId?.toString?.(),
-          customer_email: paymentData.payer?.email || undefined,
-          total: amount,
-          currency: curr || undefined
+          message: { $exists: true }
         });
+
+        // Solo crear notificación si no existe o si el estado cambió significativamente
+        const shouldCreateNotification = !existingNotification || 
+          (existingNotification.message && 
+           !existingNotification.message.includes(paymentData.status));
+
+        if (shouldCreateNotification) {
+          const status = String(paymentData.status || '').toLowerCase()
+          const statusMap: Record<string,string> = {
+            approved: 'Pago aprobado',
+            pending: 'Pago pendiente',
+            rejected: 'Pago rechazado',
+            cancelled: 'Pago cancelado',
+            refunded: 'Pago reembolsado'
+          }
+          const friendly = statusMap[status] || `Pago ${status}`
+          const method = paymentData.payment_method_id ? String(paymentData.payment_method_id).toUpperCase() : (paymentData.payment_type_id || '')
+          const amount = Number(paymentData.transaction_amount || 0)
+          const curr = paymentData.currency_id || ''
+          const detail = String(paymentData.status_detail || '')
+          const detailMap: Record<string,string> = {
+            accredited: 'acreditado',
+            pending_contingency: 'en revisión',
+            pending_review_manual: 'en revisión manual',
+            cc_rejected_other_reason: 'motivo desconocido',
+            cc_rejected_bad_filled_security_code: 'CVV incorrecto',
+            cc_rejected_bad_filled_date: 'fecha inválida',
+            cc_rejected_bad_filled_card_number: 'número inválido',
+            cc_rejected_insufficient_amount: 'fondos insuficientes',
+            cc_rejected_high_risk: 'rechazado por riesgo alto'
+          }
+          const friendlyDetail = detailMap[detail] || detail
+          const message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}`
+
+          await AdminNotification.create({
+            type: 'order',
+            status: 'unread',
+            message,
+            order_id: finalOrderId,
+            payment_id: paymentId?.toString?.(),
+            customer_email: paymentData.payer?.email || metadata.customer_email || undefined,
+            total: amount,
+            currency: curr || undefined
+          });
+          console.log(colors.green(`   📬 Notificación creada: ${message}`));
+        } else {
+          console.log(colors.yellow(`   ⏭️  Notificación ya existe para payment_id ${paymentId}, omitiendo`));
+        }
       } catch (nErr) {
         console.log(colors.yellow('⚠️ No se pudo crear notificación admin (webhook)'), nErr);
       }

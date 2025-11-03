@@ -231,13 +231,35 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       });
     }
 
-    // ========== PASO 4: CREAR PREFERENCIA DE MERCADOPAGO ==========
+    // ========== PASO 4: APLICAR DESCUENTO A LOS ITEMS ==========
+    // Si hay descuento, debemos ajustar proporcionalmente los precios de los items
+    // para que el total que Mercado Pago vea sea igual al total con descuento
+    let itemsParaMercadoPago = [...itemsValidados];
+    
+    if (descuentoCupon > 0 && totalCalculado > 0) {
+      // Calcular el factor de descuento (ej: si totalCalculado = 100 y descuento = 10, factor = 0.9)
+      const factorDescuento = totalFinal / totalCalculado;
+      console.log(colors.cyan(`   💰 Factor de descuento: ${factorDescuento.toFixed(4)} (${(factorDescuento * 100).toFixed(2)}%)`));
+      
+      // Ajustar proporcionalmente el precio unitario de cada item
+      itemsParaMercadoPago = itemsValidados.map(item => ({
+        ...item,
+        unit_price: Math.round(item.unit_price * factorDescuento * 100) / 100 // Redondear a 2 decimales
+      }));
+      
+      // Verificar que el total ajustado sea correcto
+      const totalAjustado = itemsParaMercadoPago.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
+      console.log(colors.green(`   🎟️ Descuento de $${descuentoCupon} ${targetCurrency} aplicado`));
+      console.log(colors.green(`   💵 Total calculado: $${totalCalculado} → Total con descuento: $${totalAjustado.toFixed(2)}`));
+    }
+
+    // ========== PASO 5: CREAR PREFERENCIA DE MERCADOPAGO ==========
     console.log(colors.yellow("📝 Creando preferencia de MercadoPago..."));
 
     const external_reference = `ORDER-${Date.now()}`;
     
     const preference = {
-      items: itemsValidados,
+      items: itemsParaMercadoPago,
       payer: {
         name: customerData?.name || "Cliente",
         email: customerData?.email || "cliente@example.com",
