@@ -486,11 +486,15 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
           const statusMap: Record<string,string> = {
             approved: 'Pago aprobado',
             pending: 'Pago pendiente',
+            in_process: 'Pago en proceso',
             rejected: 'Pago rechazado',
             cancelled: 'Pago cancelado',
             refunded: 'Pago reembolsado',
+            partially_refunded: 'Pago reembolsado parcialmente',
             in_mediation: 'Pago en mediación',
-            charged_back: 'Pago revertido'
+            charged_back: 'Pago revertido',
+            authorized: 'Pago autorizado',
+            null: 'Estado desconocido'
           }
           const friendly = statusMap[status] || `Pago ${status}`
           const method = paymentData.payment_method_id ? String(paymentData.payment_method_id).toUpperCase() : (paymentData.payment_type_id || '')
@@ -498,24 +502,48 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
           const curr = paymentData.currency_id || ''
           const detail = String(paymentData.status_detail || '')
           const detailMap: Record<string,string> = {
+            // Estados de aprobación
             accredited: 'acreditado',
+            
+            // Estados pendientes
             pending_contingency: 'en revisión',
             pending_review_manual: 'en revisión manual',
+            pending_waiting_payment: 'esperando pago',
+            pending_waiting_transfer: 'esperando transferencia',
+            
+            // Estados de rechazo
             cc_rejected_other_reason: 'motivo desconocido',
             cc_rejected_bad_filled_security_code: 'CVV incorrecto',
             cc_rejected_bad_filled_date: 'fecha inválida',
             cc_rejected_bad_filled_card_number: 'número inválido',
+            cc_rejected_bad_filled_other: 'datos incorrectos',
             cc_rejected_insufficient_amount: 'fondos insuficientes',
             cc_rejected_high_risk: 'rechazado por riesgo alto',
+            cc_rejected_call_for_authorize: 'requiere autorización del banco',
+            cc_rejected_blacklist: 'tarjeta bloqueada',
+            cc_rejected_card_disabled: 'tarjeta deshabilitada',
+            cc_rejected_invalid_installments: 'cuotas inválidas',
+            cc_rejected_max_attempts: 'máximo de intentos excedido',
+            
+            // Estados de disputa
             disputed_mediation: 'disputa en mediación',
-            disputed_chargeback: 'disputa por chargeback'
+            disputed_chargeback: 'disputa por chargeback',
+            
+            // Estados de autorización
+            authorized: 'autorizado',
+            pending_capture: 'pendiente de captura'
           }
           const friendlyDetail = detailMap[detail] || detail
           
           // Construir mensaje base
           let message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}`
           
-          // Si es in_mediation, agregar información adicional sobre la disputa
+          // Manejar estados especiales con información adicional
+          if (status === 'in_process') {
+            console.log(colors.cyan(`   🔄 PAGO EN PROCESO - Mercado Pago está analizando el pago`));
+            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | 🔄 Análisis en curso - Esperar confirmación`;
+          }
+          
           if (status === 'in_mediation') {
             console.log(colors.yellow(`   ⚠️ PAGO EN MEDIACIÓN - Disputa iniciada por el comprador`));
             console.log(colors.yellow(`      💡 Acción requerida: Revisar el caso en el panel de Mercado Pago`));
@@ -533,15 +561,33 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
             }
           }
           
-          // Si es charged_back, agregar información adicional
           if (status === 'charged_back') {
+            console.log(colors.red(`   ❌ CHARGEBACK - El banco revirtió el pago`));
             message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | ❌ Pago revertido por banco`;
           }
           
-          // Si es refunded, agregar información adicional
           if (status === 'refunded') {
             const refundAmount = paymentData.transaction_amount || amount;
+            console.log(colors.green(`   ✅ REEMBOLSO COMPLETADO - ${curr} ${refundAmount}`));
             message = `${friendly} - ${curr} ${refundAmount}${method ? ` - método ${method}` : ''} | ✅ Reembolso completado`;
+          }
+          
+          if (status === 'partially_refunded') {
+            const refundAmount = paymentData.transaction_amount || amount;
+            console.log(colors.yellow(`   ⚠️ REEMBOLSO PARCIAL - ${curr} ${refundAmount}`));
+            message = `${friendly} - ${curr} ${refundAmount}${method ? ` - método ${method}` : ''} | ⚠️ Reembolso parcial realizado`;
+          }
+          
+          if (status === 'authorized') {
+            console.log(colors.cyan(`   🔐 PAGO AUTORIZADO - Requiere captura posterior`));
+            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | 🔐 Autorizado - Requiere captura`;
+          }
+          
+          if (status === 'pending') {
+            // Si es pending con detalles específicos, agregar información
+            if (detail === 'pending_contingency' || detail === 'pending_review_manual') {
+              message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | ⏳ ${friendlyDetail}`;
+            }
           }
 
           await AdminNotification.create({
