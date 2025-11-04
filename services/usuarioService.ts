@@ -36,7 +36,8 @@ export class UsuarioService {
           .select('-password') // Excluir password por seguridad
           .sort({ date_created: -1 })
           .skip(skip)
-          .limit(limite),
+          .limit(limite)
+          .lean<IUsuario[]>(),
         Usuario.countDocuments(query)
       ]);
 
@@ -102,7 +103,8 @@ export class UsuarioService {
   // Buscar usuario por ID
   static async obtenerUsuarioPorId(id: string): Promise<IUsuario | null> {
     try {
-      return await Usuario.findById(id).select('-password');
+      const usuario = await Usuario.findById(id).select('-password').lean<IUsuario>();
+      return usuario;
     } catch (error: any) {
       throw new Error(`Error al obtener usuario: ${error.message}`);
     }
@@ -111,7 +113,8 @@ export class UsuarioService {
   // Buscar usuario por email
   static async obtenerUsuarioPorEmail(email: string): Promise<IUsuario | null> {
     try {
-      return await Usuario.findOne({ email: email.toLowerCase() }).select('-password');
+      const usuario = await Usuario.findOne({ email: email.toLowerCase() }).select('-password').lean<IUsuario>();
+      return usuario;
     } catch (error: any) {
       throw new Error(`Error al obtener usuario: ${error.message}`);
     }
@@ -122,11 +125,12 @@ export class UsuarioService {
     try {
       // No permitir actualizar password directamente (usar ruta específica)
       const { password, ...datosActualizacion } = datos as any;
-      return await Usuario.findByIdAndUpdate(
+      const usuario = await Usuario.findByIdAndUpdate(
         id,
         { ...datosActualizacion, date_updated: new Date() },
         { new: true }
-      ).select('-password');
+      ).select('-password').lean<IUsuario>();
+      return usuario;
     } catch (error: any) {
       throw new Error(`Error al actualizar usuario: ${error.message}`);
     }
@@ -139,7 +143,7 @@ export class UsuarioService {
         id,
         { activo: false, date_updated: new Date() },
         { new: true }
-      );
+      ).lean();
       return !!resultado;
     } catch (error: any) {
       throw new Error(`Error al eliminar usuario: ${error.message}`);
