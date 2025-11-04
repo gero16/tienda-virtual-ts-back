@@ -440,6 +440,49 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
 
         if (shouldCreateNotification) {
           const status = String(paymentData.status || '').toLowerCase()
+          
+          // Si el pago fue aprobado, eliminar notificaciones anteriores de "Orden iniciada" para evitar duplicados
+          if (status === 'approved' && paymentId) {
+            try {
+              // Buscar y eliminar notificaciones "Orden iniciada" que puedan estar asociadas
+              // por payment_id, order_id, o por el email del cliente (en caso de que no coincidan los IDs)
+              const customerEmail = paymentData.payer?.email || metadata.customer_email;
+              const deleteConditions: any[] = [
+                { payment_id: paymentId?.toString?.() },
+                { order_id: finalOrderId }
+              ];
+              
+              // Si hay external_reference, también buscar por él
+              if (paymentData.external_reference) {
+                // Buscar órdenes con este external_reference y obtener sus order_id
+                const ordenesConExternalRef = await Orden.find({ 
+                  external_reference: paymentData.external_reference 
+                }).select('orden_id').lean();
+                if (ordenesConExternalRef.length > 0) {
+                  deleteConditions.push({
+                    order_id: { $in: ordenesConExternalRef.map(o => o.orden_id) }
+                  });
+                }
+              }
+              
+              // Si hay email del cliente, también buscar por él (para casos donde los IDs no coincidan)
+              if (customerEmail) {
+                deleteConditions.push({
+                  customer_email: customerEmail,
+                  message: { $regex: /Orden iniciada/i }
+                });
+              }
+              
+              await AdminNotification.deleteMany({
+                $or: deleteConditions,
+                message: { $regex: /Orden iniciada/i }
+              });
+              console.log(colors.cyan(`   🗑️ Notificaciones "Orden iniciada" eliminadas para payment_id ${paymentId}`));
+            } catch (delErr) {
+              console.log(colors.yellow(`   ⚠️ No se pudieron eliminar notificaciones anteriores: ${delErr}`));
+            }
+          }
+          
           const statusMap: Record<string,string> = {
             approved: 'Pago aprobado',
             pending: 'Pago pendiente',
