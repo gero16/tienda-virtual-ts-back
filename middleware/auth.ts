@@ -44,4 +44,19 @@ export const authorize = (...rolesPermitidos: string[]) => {
   };
 };
 
+// Middleware específico para gestionar destacados: solo permite email específico
+export const authorizeDestacados = (req: Request, res: Response, next: NextFunction) => {
+  // @ts-ignore
+  const user = req.user as JwtPayload | undefined;
+  if (!user) {
+    return res.status(401).json({ error: "No autorizado" });
+  }
+  // Solo el email específico puede gestionar destacados
+  const allowedEmail = 'geronicola1696@gmail.com';
+  if (user.email.toLowerCase() !== allowedEmail.toLowerCase()) {
+    return res.status(403).json({ error: "Prohibido: solo el administrador principal puede gestionar destacados" });
+  }
+  next();
+};
+
 

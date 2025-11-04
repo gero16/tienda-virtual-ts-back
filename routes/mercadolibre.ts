@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { authenticate, authorize } from "../middleware/auth";
+import { authenticate, authorize, authorizeDestacados } from "../middleware/auth";
 import axios from "axios";
 import Token from "../models/Token";
 import Notificacion from "../models/Notificacion";
@@ -994,8 +994,21 @@ router.get("/admin/productos", authenticate, authorize("admin"), async (req: Req
       // Query con proyección opcional
       let query = Producto.find(mongoFilter) as any;
       if (projection) query = query.select(projection);
+      
+      // Optimizar populate: solo cargar campos necesarios de variantes para mejorar rendimiento
+      // Si se especifican campos, intentar optimizar el populate
+      const populateOptions: any = { path: "variantes" };
+      if (fields && String(fields).trim()) {
+        const fieldsStr = String(fields).toLowerCase();
+        // Si se solicita información de variantes, cargar solo los campos necesarios
+        if (fieldsStr.includes('variantes') || fieldsStr.includes('tipo_venta') || fieldsStr.includes('dropshipping')) {
+          // Seleccionar solo campos básicos + los solicitados (incluir _id siempre)
+          populateOptions.select = '_id tipo_venta dropshipping';
+        }
+      }
+      
       const productos = await query
-        .populate("variantes")
+        .populate(populateOptions)
         .limit(limitNum)
         .skip(actualSkip)
         .lean();
@@ -1016,7 +1029,18 @@ router.get("/admin/productos", authenticate, authorize("admin"), async (req: Req
     // Sin limit: devolver todos con filtro aplicado
     let queryAll = Producto.find(mongoFilter) as any;
     if (projection) queryAll = queryAll.select(projection);
-    const productos = await queryAll.populate("variantes");
+    
+    // Optimizar populate: solo cargar campos necesarios de variantes para mejorar rendimiento
+    const populateOptionsAll: any = { path: "variantes" };
+    if (fields && String(fields).trim()) {
+      const fieldsStr = String(fields).toLowerCase();
+      // Si se solicita información de variantes, cargar solo los campos necesarios
+      if (fieldsStr.includes('variantes') || fieldsStr.includes('tipo_venta') || fieldsStr.includes('dropshipping')) {
+        populateOptionsAll.select = '_id tipo_venta dropshipping';
+      }
+    }
+    
+    const productos = await queryAll.populate(populateOptionsAll);
     res.json(productos);
   } catch (err: any) {
     res.status(500).send("❌ Error al obtener productos: " + err.message);
@@ -1474,8 +1498,8 @@ router.get("/home/categories", async (req: Request, res: Response) => {
   }
 });
 
-// 🆕 Endpoint para marcar/desmarcar producto como destacado
-router.put("/productos/:id/destacado", async (req: Request, res: Response) => {
+// 🆕 Endpoint para marcar/desmarcar producto como destacado (protegido)
+router.put("/productos/:id/destacado", authenticate, authorizeDestacados, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { destacado } = req.body;
@@ -5477,7 +5501,7 @@ router.post("/reset-auth", async (req: Request, res: Response) => {
 
 // Nota: La exportación del router debe ir al final del archivo
 
-router.put("/productos/:ml_id/destacado", authenticate, authorize("admin"), async (req: Request, res: Response) => {
+router.put("/productos/:ml_id/destacado", authenticate, authorizeDestacados, async (req: Request, res: Response) => {
   try {
     const ml_id = req.params.ml_id;
     const { destacado } = req.body as { destacado: boolean };
@@ -5548,7 +5572,7 @@ router.post("/productos", authenticate, authorize("admin"), async (req: Request,
 // 🆕 Batch destacados (admin)
 // PUT /ml/productos/destacado/batch { ml_ids: string[], destacado: boolean }
 // =====================
-router.put("/productos/destacado/batch", authenticate, authorize("admin"), async (req: Request, res: Response) => {
+router.put("/productos/destacado/batch", authenticate, authorizeDestacados, async (req: Request, res: Response) => {
   try {
     const { ml_ids, destacado } = req.body as { ml_ids: string[]; destacado: boolean };
     if (!Array.isArray(ml_ids) || typeof destacado === 'undefined') {
