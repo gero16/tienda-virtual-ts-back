@@ -4,6 +4,7 @@ import CuponModel from "../models/Cupon";
 import { authenticate, authorize } from "../middleware/auth";
 import { ClienteService } from "../services/clienteService";
 import Orden from "../models/Orden";
+import Usuario from "../models/Usuario";
 
 const router = Router();
 
@@ -206,13 +207,17 @@ router.post("/validar", async (req: Request, res: Response) => {
 
     // Validaciones especiales para cupón POPPYWEB
     if (codigoUpperCase === 'POPPYWEB' && email_usuario) {
-      // Verificar que el cliente esté registrado
+      // Verificar que el usuario esté registrado en el sistema de autenticación
       try {
-        const cliente = await ClienteService.obtenerClientePorEmail(email_usuario);
-        if (!cliente) {
+        const usuario = await Usuario.findOne({ 
+          email: email_usuario.toLowerCase(),
+          activo: true 
+        });
+        
+        if (!usuario) {
           return res.status(400).json({ 
             valido: false,
-            error: "Este cupón solo es válido para clientes registrados. Por favor regístrate primero." 
+            error: "Este cupón solo es válido para usuarios registrados. Por favor regístrate primero." 
           });
         }
 
@@ -225,11 +230,11 @@ router.post("/validar", async (req: Request, res: Response) => {
         if (ordenesAnteriores > 0) {
           return res.status(400).json({ 
             valido: false,
-            error: "Este cupón solo es válido para la primera compra de clientes registrados." 
+            error: "Este cupón solo es válido para la primera compra de usuarios registrados." 
           });
         }
       } catch (error: any) {
-        console.error(colors.red("Error validando cliente para cupón POPPYWEB:"), error);
+        console.error(colors.red("Error validando usuario para cupón POPPYWEB:"), error);
         return res.status(500).json({ 
           valido: false,
           error: "Error al validar los requisitos del cupón. Por favor intenta de nuevo." 
