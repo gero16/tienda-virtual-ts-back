@@ -9,6 +9,7 @@ import colors from "colors"
 import routes from './routes/api'; 
 import mercadolibre from './routes/mercadolibre';
 import clientes from './routes/clientes'; // 🆕 Importar rutas de clientes
+import usuarios from './routes/usuarios'; // 🆕 Importar rutas de usuarios
 import descuentos from './routes/descuentos'; // 🆕 Importar rutas de descuentos
 import cupones from './routes/cupones'; // 🆕 Importar rutas de cupones
 import sitemap from './routes/sitemap'; // 🆕 Importar rutas de sitemap/SEO
@@ -77,6 +78,7 @@ app.use('/api', routes);
 app.use('/ml', mercadolibre);
 app.use('/auth', authRoutes); // 🆕 Auth (login, crear admin)
 app.use('/api/clientes', clientes); // 🆕 Agregar rutas de clientes
+app.use('/api/usuarios', usuarios); // 🆕 Agregar rutas de usuarios
 app.use('/api/descuentos', descuentos); // 🆕 Agregar rutas de descuentos
 app.use('/api/cupones', cupones); // 🆕 Agregar rutas de cupones
 app.use('/api/eventos', eventos); // 🆕 Agregar rutas de eventos especiales
