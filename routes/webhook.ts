@@ -488,7 +488,9 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
             pending: 'Pago pendiente',
             rejected: 'Pago rechazado',
             cancelled: 'Pago cancelado',
-            refunded: 'Pago reembolsado'
+            refunded: 'Pago reembolsado',
+            in_mediation: 'Pago en mediación',
+            charged_back: 'Pago revertido'
           }
           const friendly = statusMap[status] || `Pago ${status}`
           const method = paymentData.payment_method_id ? String(paymentData.payment_method_id).toUpperCase() : (paymentData.payment_type_id || '')
@@ -504,10 +506,43 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
             cc_rejected_bad_filled_date: 'fecha inválida',
             cc_rejected_bad_filled_card_number: 'número inválido',
             cc_rejected_insufficient_amount: 'fondos insuficientes',
-            cc_rejected_high_risk: 'rechazado por riesgo alto'
+            cc_rejected_high_risk: 'rechazado por riesgo alto',
+            disputed_mediation: 'disputa en mediación',
+            disputed_chargeback: 'disputa por chargeback'
           }
           const friendlyDetail = detailMap[detail] || detail
-          const message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}`
+          
+          // Construir mensaje base
+          let message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}`
+          
+          // Si es in_mediation, agregar información adicional sobre la disputa
+          if (status === 'in_mediation') {
+            console.log(colors.yellow(`   ⚠️ PAGO EN MEDIACIÓN - Disputa iniciada por el comprador`));
+            console.log(colors.yellow(`      💡 Acción requerida: Revisar el caso en el panel de Mercado Pago`));
+            
+            // Agregar información útil al mensaje de la notificación
+            const payerEmail = paymentData.payer?.email || metadata.customer_email || 'Cliente';
+            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | ⚠️ Disputa iniciada - Revisar en panel MP`;
+            
+            // Si hay información adicional sobre la disputa, agregarla
+            if (paymentData.dispute) {
+              const disputeInfo = paymentData.dispute;
+              if (disputeInfo.reason) {
+                message += ` | Motivo: ${disputeInfo.reason}`;
+              }
+            }
+          }
+          
+          // Si es charged_back, agregar información adicional
+          if (status === 'charged_back') {
+            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | ❌ Pago revertido por banco`;
+          }
+          
+          // Si es refunded, agregar información adicional
+          if (status === 'refunded') {
+            const refundAmount = paymentData.transaction_amount || amount;
+            message = `${friendly} - ${curr} ${refundAmount}${method ? ` - método ${method}` : ''} | ✅ Reembolso completado`;
+          }
 
           await AdminNotification.create({
             type: 'order',
