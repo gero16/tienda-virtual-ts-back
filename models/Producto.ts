@@ -5,6 +5,10 @@ export interface IProducto extends Document {
   ml_id: string;
   title: string;
   price: number;
+  last_valid_price?: number;
+  price_invalid?: boolean;
+  price_invalid_reason?: string | null;
+  price_invalid_at?: Date | null;
   available_quantity: number;
   status: string;
   permalink?: string; // URL de la publicación en MercadoLibre
@@ -114,6 +118,10 @@ const ProductoSchema = new Schema<IProducto>({
   ml_id: { type: String, required: true, unique: true },
   title: { type: String, required: true },
   price: { type: Number, required: true },
+  last_valid_price: { type: Number },
+  price_invalid: { type: Boolean, default: false },
+  price_invalid_reason: { type: String, default: null },
+  price_invalid_at: { type: Date, default: null },
   available_quantity: { type: Number, required: true },
   status: { type: String, required: true },
   permalink: { type: String, default: "" }, // URL de la publicación en MercadoLibre

@@ -11,6 +11,7 @@ export interface IAdminNotification extends Document {
   customer_email?: string;
   total?: number;
   currency?: string;
+  product_ml_id?: string;
   createdAt?: Date;
 }
 
@@ -25,6 +26,7 @@ const AdminNotificationSchema = new Schema<IAdminNotification>({
   customer_email: { type: String },
   total: { type: Number },
   currency: { type: String, default: "UYU" },
+  product_ml_id: { type: String },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 
 export default mongoose.model<IAdminNotification>("AdminNotification", AdminNotificationSchema);

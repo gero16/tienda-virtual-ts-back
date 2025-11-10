@@ -176,6 +176,12 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
         });
       }
 
+      if (producto.price_invalid || (producto.price ?? 0) <= 0) {
+        return res.status(400).json({
+          error: `El producto "${producto.title}" tiene un precio inválido y no puede procesarse.`
+        });
+      }
+
       if (producto.available_quantity < item.cantidad) {
         return res.status(400).json({ 
           error: `Stock insuficiente para "${producto.title}". Disponible: ${producto.available_quantity}` 

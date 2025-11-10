@@ -4,9 +4,11 @@ import axios from "axios";
 import Token from "../models/Token";
 import Notificacion from "../models/Notificacion";
 import Producto from "../models/Producto";
+import AdminNotification from "../models/AdminNotification";
 import cron from "node-cron";
 import { Types } from "mongoose";
 import Variante from "../models/Variante";
+import { sendPriceInvalidEmail } from "../services/emailService";
 
 const router = Router();
 
@@ -104,6 +106,132 @@ function savePartial(items: any[], name: string) {
   }
 }
 
+interface PriceValidationContext {
+  source: string;
+  ml_id: string;
+  metadata?: Record<string, any>;
+}
+
+async function createPriceInvalidAdminNotification(params: {
+  ml_id: string;
+  title?: string | null;
+  reason: string | null;
+  rawPrice: any;
+  fallbackPrice: number | null;
+  source: string;
+}) {
+  try {
+    const { ml_id, title, reason, rawPrice, fallbackPrice, source } = params;
+
+    const exists = await AdminNotification.findOne({
+      type: "system",
+      status: "unread",
+      product_ml_id: ml_id,
+      message: /Precio inválido/
+    }).lean();
+
+    if (exists) return;
+
+    const humanRaw =
+      rawPrice === null || typeof rawPrice === "undefined"
+        ? "null"
+        : Number.isNaN(Number(rawPrice))
+          ? String(rawPrice)
+          : `${rawPrice}`;
+
+    const messageParts = [
+      `Precio inválido detectado en ${title ? `"${title}"` : ml_id}`,
+      `Motivo: ${reason ?? "desconocido"}`,
+      `Valor recibido: ${humanRaw}`,
+      `Origen: ${source}`,
+    ];
+    if (typeof fallbackPrice === "number" && fallbackPrice > 0) {
+      messageParts.push(`Se mantuvo precio anterior: ${fallbackPrice}`);
+    }
+
+    await AdminNotification.create({
+      type: "system",
+      status: "unread",
+      message: messageParts.join(" | "),
+      product_ml_id: ml_id,
+    });
+
+    void sendPriceInvalidEmail({
+      ml_id,
+      title,
+      reason,
+      rawPrice,
+      fallbackPrice,
+      source,
+    });
+  } catch (error: any) {
+    console.error("❌ Error creando notificación de precio inválido:", error.message || error);
+  }
+}
+
+function evaluatePriceForUpdate(rawPrice: any, existingProduct: any, context: PriceValidationContext) {
+  const now = new Date();
+  const numeric = typeof rawPrice === 'number' ? rawPrice : Number(rawPrice);
+  let reason: string | null = null;
+
+  if (typeof numeric !== 'number' || Number.isNaN(numeric)) {
+    reason = 'not_a_number';
+  } else if (!Number.isFinite(numeric)) {
+    reason = 'not_finite';
+  } else if (numeric <= 0) {
+    reason = 'non_positive';
+  }
+
+  const isInvalid = !!reason;
+  const fallback = typeof existingProduct?.last_valid_price === 'number' && existingProduct.last_valid_price > 0
+    ? existingProduct.last_valid_price
+    : (typeof existingProduct?.price === 'number' && existingProduct.price > 0 ? existingProduct.price : 0);
+
+  const priceToPersist = isInvalid ? fallback : numeric;
+
+  const fields: any = {
+    price: priceToPersist,
+    price_invalid: isInvalid,
+    price_invalid_reason: isInvalid ? reason : null,
+    price_invalid_at: isInvalid ? now : null,
+  };
+
+  if (!isInvalid && Number.isFinite(numeric)) {
+    fields.last_valid_price = numeric;
+  }
+  if (!isInvalid) {
+    fields.price_invalid_at = null;
+  }
+
+  if (isInvalid) {
+    console.warn(`⚠️ [ML price guard] ${context.source} detectó precio inválido para ${context.ml_id}`, {
+      rawPrice,
+      fallback,
+      reason,
+      metadata: context.metadata || null,
+    });
+
+    const alreadyInvalid = existingProduct?.price_invalid === true;
+    if (!alreadyInvalid) {
+      void createPriceInvalidAdminNotification({
+        ml_id: context.ml_id,
+        title: (existingProduct?.title as string | undefined) ?? (context.metadata?.title as string | undefined) ?? null,
+        reason,
+        rawPrice,
+        fallbackPrice: fallback > 0 ? fallback : null,
+        source: context.source,
+      });
+    }
+  }
+
+  return {
+    price: priceToPersist,
+    fields,
+    isInvalid,
+    reason,
+  };
+}
+
 // -------------------- HANDLERS --------------------
 interface NotificationParams {
   resource: string;
@@ -157,7 +285,17 @@ async function handlePriceNotification(resourceUrl: string, accessToken: string)
       updated_at: new Date(),
     });
 
-    await Producto.updateOne({ ml_id: itemId }, { price: newPrice });
+    const existingProduct = await Producto.findOne({ ml_id: itemId }).lean();
+    const { fields } = evaluatePriceForUpdate(newPrice, existingProduct, {
+      source: 'price_notification',
+      ml_id: itemId,
+      metadata: {
+        resourceUrl,
+        title: existingProduct?.title,
+      },
+    });
+
+    await Producto.updateOne({ ml_id: itemId }, { $set: fields });
   } catch (error: any) {
     if (error.response?.status === 401) {
       const freshToken = await getCurrentToken();
@@ -267,6 +405,13 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
         }
       : undefined;
     
+    const priceEvaluation = evaluatePriceForUpdate(precioActualizado, productoExistente, {
+      source: 'item_notification',
+      ml_id: item.id,
+      metadata: { topic: 'items', title: item.title },
+    });
+    precioActualizado = priceEvaluation.price;
+
     // --- Actualizar/Crear Producto ---
     const identity = extractIdentityFields(item);
     let producto = await Producto.findOneAndUpdate(
@@ -274,7 +419,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
     {
       ml_id: item.id,
       title: item.title,
-      price: precioActualizado,
+      ...priceEvaluation.fields,
       descuento: descuentoActualizado,
       descuento_ml: descuentoML, // ✅ NUEVO: Descuento nativo de ML
       available_quantity: item.available_quantity,
@@ -374,7 +519,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
           color,
           size,
           stock: variante.available_quantity,
-          price: variante.price || item.price,
+          price: variante.price || precioActualizado,
           images: variante.picture_ids?.map((id: string) => ({
             id: id,
             url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
@@ -761,6 +906,14 @@ async function forceUpdateProductos() {
         console.log("⚠️ No se pudo obtener la descripción para:", itemId);
       }
 
+      const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
+      const priceEvaluation = evaluatePriceForUpdate(itemDetail.price, existingProduct, {
+        source: 'force_sync',
+        ml_id: itemDetail.id,
+        metadata: { title: itemDetail.title },
+      });
+      const effectiveProductPrice = priceEvaluation.price;
+
       // --- Producto ---
       const identity = extractIdentityFields(itemDetail);
       let producto = await Producto.findOneAndUpdate(
@@ -768,7 +921,7 @@ async function forceUpdateProductos() {
         {
           ml_id: itemDetail.id,
           title: itemDetail.title,
-          price: itemDetail.price,
+          ...priceEvaluation.fields,
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
           permalink: getCorrectPermalink(itemDetail), // URL validada de la publicación
@@ -830,7 +983,7 @@ async function forceUpdateProductos() {
               color,
               size,
               stock: variante.available_quantity,
-              price: variante.price || itemDetail.price,
+              price: variante.price || effectiveProductPrice,
               images: variante.picture_ids?.map((id: string) => ({
                 id: id,
                 url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
@@ -927,7 +1080,7 @@ async function forceUpdateProductos() {
 // (ANTIGUO) Duplicado: consolidar en el de más abajo
 router.get("/admin/productos", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
-    const { limit, skip, page, offset, status, q, fields, categoryIds, destacado } = req.query as Record<string, string>;
+    const { limit, skip, page, offset, status, q, fields, categoryIds, destacado, priceInvalid: priceInvalidQuery } = req.query as Record<string, string>;
 
     // Filtros base (excluye archivados y duplicados apuntados)
     const baseFilter: any = {
@@ -964,6 +1117,14 @@ router.get("/admin/productos", authenticate, authorize("admin"), async (req: Req
       const val = String(destacado).toLowerCase();
       if (val === 'true' || val === '1') andClauses.push({ destacado: true });
       if (val === 'false' || val === '0') andClauses.push({ destacado: { $ne: true } });
+    }
+    if (typeof priceInvalidQuery !== 'undefined') {
+      const normalized = String(priceInvalidQuery).toLowerCase();
+      if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+        andClauses.push({ price_invalid: true });
+      } else if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+        andClauses.push({ price_invalid: { $ne: true } });
+      }
     }
     const mongoFilter = andClauses.length > 1 ? { $and: andClauses } : baseFilter;
 
@@ -1047,6 +1208,33 @@ router.get("/admin/productos", authenticate, authorize("admin"), async (req: Req
   }
 });
 
+router.post("/admin/productos/:ml_id/clear-invalid-price", authenticate, authorize("admin"), async (req: Request, res: Response) => {
+  try {
+    const { ml_id } = req.params;
+    const producto = await Producto.findOne({ ml_id });
+    if (!producto) {
+      return res.status(404).json({ error: "Producto no encontrado" });
+    }
+
+    const fallback = typeof producto.last_valid_price === 'number' && producto.last_valid_price > 0
+      ? producto.last_valid_price
+      : (typeof producto.price === 'number' && producto.price > 0 ? producto.price : null);
+
+    producto.price_invalid = false;
+    producto.price_invalid_reason = null;
+    producto.price_invalid_at = null;
+    if (fallback && fallback > 0) {
+      producto.price = fallback;
+    }
+
+    await producto.save();
+
+    return res.json({ success: true, producto });
+  } catch (error: any) {
+    return res.status(500).json({ error: "Error limpiando bandera de precio inválido", message: error.message });
+  }
+});
+
 // =====================
 // 🆕 Productos por categoría ML (endpoint específico)
 // GET /ml/categories/:categoryIds/productos?limit=120&offset=0&fields=ml_id,title,price,...&status=active
@@ -1058,6 +1246,7 @@ router.get(["/categories/:categoryIds/productos", "/categories/productos"], asyn
     const categoryIdsParam = (req.params.categoryIds as string) || (req.query.categoryIds as string) || "";
     const fields = (req.query.fields as string) || "";
     const status = (req.query.status as string) || undefined;
+    const priceInvalidQuery = (req.query.priceInvalid as string) || undefined;
     const limitStr = (req.query.limit as string) || "";
     const offsetStr = (req.query.offset as string) || "0";
 
@@ -2482,6 +2671,13 @@ router.post("/sync/backfill-missing", async (req: Request, res: Response) => {
           { headers: { Authorization: `Bearer ${token.access_token}` } }
         );
 
+        const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
+        const priceEvaluation = evaluatePriceForUpdate(itemDetail.price, existingProduct, {
+          source: 'backfill_missing',
+          ml_id: itemDetail.id,
+          metadata: { title: itemDetail.title },
+        });
+
         // Guardar mínimo en DB
         const identity = extractIdentityFields(itemDetail);
         await Producto.findOneAndUpdate(
@@ -2489,7 +2685,7 @@ router.post("/sync/backfill-missing", async (req: Request, res: Response) => {
           {
             ml_id: itemDetail.id,
             title: itemDetail.title,
-            price: itemDetail.price,
+            ...priceEvaluation.fields,
             available_quantity: itemDetail.available_quantity,
             status: itemDetail.status,
             permalink: getCorrectPermalink(itemDetail),
@@ -2592,13 +2788,19 @@ router.post("/sync/backfill-missing-extended", async (req: Request, res: Respons
           `https://api.mercadolibre.com/items/${id}`,
           { headers: { Authorization: `Bearer ${token.access_token}` } }
         );
+        const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
+        const priceEvaluation = evaluatePriceForUpdate(itemDetail.price, existingProduct, {
+          source: 'backfill_missing_extended',
+          ml_id: itemDetail.id,
+          metadata: { title: itemDetail.title },
+        });
         const identity = extractIdentityFields(itemDetail);
         await Producto.findOneAndUpdate(
           { ml_id: itemDetail.id },
           {
             ml_id: itemDetail.id,
             title: itemDetail.title,
-            price: itemDetail.price,
+            ...priceEvaluation.fields,
             available_quantity: itemDetail.available_quantity,
             status: itemDetail.status,
             permalink: getCorrectPermalink(itemDetail),
@@ -2725,12 +2927,20 @@ async function robustSyncExtended() {
         );
         description = descResponse.data.plain_text || "";
       } catch {}
+      const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
+      const priceEvaluation = evaluatePriceForUpdate(itemDetail.price, existingProduct, {
+        source: 'robust_sync_extended',
+        ml_id: itemDetail.id,
+        metadata: { title: itemDetail.title },
+      });
+      const effectiveProductPrice = priceEvaluation.price;
+
       let producto = await Producto.findOneAndUpdate(
         { ml_id: itemDetail.id },
         {
           ml_id: itemDetail.id,
           title: itemDetail.title,
-          price: itemDetail.price,
+          ...priceEvaluation.fields,
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
           permalink: getCorrectPermalink(itemDetail),
@@ -2772,7 +2982,7 @@ async function robustSyncExtended() {
               color,
               size,
               stock: variante.available_quantity,
-              price: variante.price || itemDetail.price,
+              price: variante.price || effectiveProductPrice,
               images: variante.picture_ids?.map((id: string) => ({ id, url: `https://http2.mlstatic.com/D_${id}-F.jpg`, high_quality: `https://http2.mlstatic.com/D_${id}-O.jpg` })) || [],
               attribute_combinations: variante.attribute_combinations?.map((attr: any) => ({ id: attr.id, name: attr.name, value_id: attr.value_id, value_name: attr.value_name })) || []
             },
@@ -2921,6 +3131,14 @@ async function robustSyncProductos() {
         console.log("⚠️ No se pudo obtener la descripción para:", itemId);
       }
 
+      const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
+      const priceEvaluation = evaluatePriceForUpdate(itemDetail.price, existingProduct, {
+        source: 'robust_sync',
+        ml_id: itemDetail.id,
+        metadata: { title: itemDetail.title },
+      });
+      const effectiveProductPrice = priceEvaluation.price;
+
       // --- Producto ---
       const identity = extractIdentityFields(itemDetail);
       let producto = await Producto.findOneAndUpdate(
@@ -2928,7 +3146,7 @@ async function robustSyncProductos() {
         {
           ml_id: itemDetail.id,
           title: itemDetail.title,
-          price: itemDetail.price,
+          ...priceEvaluation.fields,
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
           permalink: getCorrectPermalink(itemDetail), // URL validada de la publicación
@@ -2990,7 +3208,7 @@ async function robustSyncProductos() {
               color,
               size,
               stock: variante.available_quantity,
-              price: variante.price || itemDetail.price,
+              price: variante.price || effectiveProductPrice,
               images: variante.picture_ids?.map((id: string) => ({
                 id: id,
                 url: `https://http2.mlstatic.com/D_${id}-F.jpg`,
@@ -3729,13 +3947,20 @@ router.get("/sync/force-limited", async (req: Request, res: Response) => {
           console.log("⚠️ No se pudo obtener la descripción para:", itemId);
         }
 
+        const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
+        const priceEvaluation = evaluatePriceForUpdate(itemDetail.price, existingProduct, {
+          source: 'force_limited',
+          ml_id: itemDetail.id,
+          metadata: { title: itemDetail.title },
+        });
+
         // Guardar producto
         await Producto.findOneAndUpdate(
           { ml_id: itemDetail.id },
           {
             ml_id: itemDetail.id,
             title: itemDetail.title,
-            price: itemDetail.price,
+            ...priceEvaluation.fields,
             available_quantity: itemDetail.available_quantity,
             status: itemDetail.status,
             images: itemDetail.pictures?.map((picture: any) => ({
@@ -5543,6 +5768,9 @@ router.post("/productos", authenticate, authorize("admin"), async (req: Request,
     if (!ml_id || !title || typeof price !== 'number' || typeof available_quantity !== 'number' || !status) {
       return res.status(400).json({ error: "ml_id, title, price, available_quantity y status son requeridos" });
     }
+    if (price <= 0) {
+      return res.status(400).json({ error: "El precio debe ser mayor a 0" });
+    }
 
     const existente = await Producto.findOne({ ml_id });
     if (existente) {
@@ -5555,6 +5783,7 @@ router.post("/productos", authenticate, authorize("admin"), async (req: Request,
       price,
       available_quantity,
       status,
+      last_valid_price: price,
       category_id: category_id || '',
       main_image: main_image || undefined,
       images: Array.isArray(images) ? images : (main_image ? [{ id: 'main', url: main_image, max_size: '' }] : []),
@@ -5595,42 +5824,6 @@ router.put("/productos/destacado/batch", authenticate, authorizeDestacados, asyn
 // 🆕 Productos paginados (para admin)
 // GET /ml/productos?limit=250&offset=0&fields=ml_id,title,price,available_quantity,status,images,category_id,shipping,dias_preparacion,dias_envio_estimado,proveedor,pais_origen,destacado
 // =====================
-router.get("/admin/productos", authenticate, authorize("admin"), async (req: Request, res: Response) => {
-  try {
-    const limit = Math.min(parseInt((req.query.limit as string) || "250"), 1000);
-    const offset = Math.max(parseInt((req.query.offset as string) || "0"), 0);
-    const fields = (req.query.fields as string) || "";
-    const status = (req.query.status as string) || undefined;
-
-    const projection: any = {};
-    if (fields) {
-      for (const f of fields.split(",")) {
-        const key = f.trim();
-        if (key) projection[key] = 1;
-      }
-    }
-
-    const filter: any = {};
-    if (status && status !== "all") {
-      filter.status = status;
-    }
-
-    const [items, total] = await Promise.all([
-      Producto.find(filter, projection).sort({ _id: 1 }).skip(offset).limit(limit).lean(),
-      Producto.countDocuments(filter)
-    ]);
-
-    return res.json({
-      total,
-      limit,
-      offset,
-      items
-    });
-  } catch (error: any) {
-    return res.status(500).json({ error: "Error obteniendo productos paginados", message: error.message });
-  }
-});
-
 // =====================
 // ✅ Productos (público)
 // - Sin limit/offset: devuelve ARRAY (compatibilidad anterior)
