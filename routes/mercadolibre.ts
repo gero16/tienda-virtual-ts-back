@@ -9,6 +9,7 @@ import cron from "node-cron";
 import { Types } from "mongoose";
 import Variante from "../models/Variante";
 import { sendPriceInvalidEmail } from "../services/emailService";
+import { buildAccentInsensitiveRegex } from "../utils/text";
 
 const router = Router();
 
@@ -1095,7 +1096,8 @@ router.get("/admin/productos", authenticate, authorize("admin"), async (req: Req
     }
     if (q && String(q).trim()) {
       const term = String(q).trim();
-      const regex = new RegExp(term, 'i');
+      const pattern = buildAccentInsensitiveRegex(term);
+      const regex = new RegExp(pattern, 'i');
       andClauses.push({ $or: [
         { title: regex },
         { ml_id: regex },
@@ -5849,7 +5851,8 @@ router.get("/productos", async (req: Request, res: Response) => {
     }
     if (q && String(q).trim()) {
       const term = String(q).trim();
-      const regex = new RegExp(term, 'i');
+      const pattern = buildAccentInsensitiveRegex(term);
+      const regex = new RegExp(pattern, 'i');
       andClauses.push({ $or: [
         { title: regex },
         { ml_id: regex },
