@@ -9,6 +9,15 @@ export interface IProducto extends Document {
   price_invalid?: boolean;
   price_invalid_reason?: string | null;
   price_invalid_at?: Date | null;
+  price_override?: {
+    active: boolean;
+    value?: number;
+    reason?: string | null;
+    updated_at?: Date | null;
+    updated_by?: string | null;
+    ml_price_last?: number | null;
+    ml_price_last_at?: Date | null;
+  };
   available_quantity: number;
   status: string;
   permalink?: string; // URL de la publicación en MercadoLibre
@@ -122,6 +131,15 @@ const ProductoSchema = new Schema<IProducto>({
   price_invalid: { type: Boolean, default: false },
   price_invalid_reason: { type: String, default: null },
   price_invalid_at: { type: Date, default: null },
+  price_override: {
+    active: { type: Boolean, default: false },
+    value: { type: Number },
+    reason: { type: String, default: null },
+    updated_at: { type: Date },
+    updated_by: { type: String },
+    ml_price_last: { type: Number },
+    ml_price_last_at: { type: Date }
+  },
   available_quantity: { type: Number, required: true },
   status: { type: String, required: true },
   permalink: { type: String, default: "" }, // URL de la publicación en MercadoLibre

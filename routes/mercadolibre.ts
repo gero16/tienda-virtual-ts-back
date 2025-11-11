@@ -140,7 +140,15 @@ async function createPriceInvalidAdminNotification(params: {
           ? String(rawPrice)
           : `${rawPrice}`;
 
+    const badge =
+      reason === "price_zero"
+        ? "🟡 PRECIO = 0"
+        : reason === "price_negative"
+          ? "🔴 PRECIO NEGATIVO"
+          : "⛔ PRECIO INVÁLIDO";
+
     const messageParts = [
+      badge,
       `Precio inválido detectado en ${title ? `"${title}"` : ml_id}`,
       `Motivo: ${reason ?? "desconocido"}`,
       `Valor recibido: ${humanRaw}`,
@@ -179,8 +187,52 @@ function evaluatePriceForUpdate(rawPrice: any, existingProduct: any, context: Pr
     reason = 'not_a_number';
   } else if (!Number.isFinite(numeric)) {
     reason = 'not_finite';
-  } else if (numeric <= 0) {
-    reason = 'non_positive';
+  } else if (numeric === 0) {
+    reason = 'price_zero';
+  } else if (numeric < 0) {
+    reason = 'price_negative';
+  }
+
+  const override = existingProduct?.price_override;
+  const overrideActive = override?.active === true;
+  if (overrideActive) {
+    const overrideValue =
+      typeof override?.value === 'number' && override.value > 0
+        ? override.value
+        : (typeof existingProduct?.price === 'number' && existingProduct.price > 0
+            ? existingProduct.price
+            : null);
+
+    const fields: any = {
+      price_invalid: false,
+      price_invalid_reason: null,
+      price_invalid_at: null,
+    };
+
+    if (overrideValue !== null) {
+      fields.price = overrideValue;
+      fields.last_valid_price = overrideValue;
+    }
+
+    const mlSnapshot = typeof numeric === 'number' && Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+    if (mlSnapshot !== null) {
+      fields.price_override = {
+        ...override,
+        ml_price_last: mlSnapshot,
+        ml_price_last_at: now,
+      };
+    } else if (override) {
+      fields.price_override = {
+        ...override,
+      };
+    }
+
+    return {
+      price: overrideValue ?? existingProduct?.price ?? 0,
+      fields,
+      isInvalid: false,
+      reason: null,
+    };
   }
 
   const isInvalid = !!reason;
@@ -1453,6 +1505,75 @@ router.post("/admin/productos/:ml_id/clear-invalid-price", authenticate, authori
     return res.json({ success: true, producto });
   } catch (error: any) {
     return res.status(500).json({ error: "Error limpiando bandera de precio inválido", message: error.message });
+  }
+});
+
+router.put("/admin/productos/:ml_id/price-override", authenticate, authorize("admin"), async (req: Request, res: Response) => {
+  try {
+    const { ml_id } = req.params;
+    const { value, reason, active, syncWithMl } = req.body as {
+      value?: number | string;
+      reason?: string;
+      active?: boolean;
+      syncWithMl?: boolean;
+    };
+
+    const producto = await Producto.findOne({ ml_id });
+    if (!producto) {
+      return res.status(404).json({ error: "Producto no encontrado" });
+    }
+
+    // @ts-ignore
+    const user = req.user as { email?: string; id?: string } | undefined;
+    const now = new Date();
+    const normalizedActive = typeof active === "boolean" ? active : true;
+
+    if (normalizedActive) {
+      const parsedValue =
+        typeof value === "number" ? value : Number(typeof value === "string" ? value.replace(',', '.') : value);
+      if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+        return res.status(400).json({ error: "El valor ingresado debe ser un número mayor a 0" });
+      }
+
+      const normalizedReason = typeof reason === "string" && reason.trim() ? reason.trim() : null;
+      producto.price = parsedValue;
+      producto.last_valid_price = parsedValue;
+      producto.price_invalid = false;
+      producto.price_invalid_reason = null;
+      producto.price_invalid_at = null;
+      producto.price_override = {
+        active: true,
+        value: parsedValue,
+        reason: normalizedReason,
+        updated_at: now,
+        updated_by: (user?.email || user?.id || "admin").toString(),
+        ml_price_last: producto.price_override?.ml_price_last ?? undefined,
+        ml_price_last_at: producto.price_override?.ml_price_last_at ?? undefined,
+      } as any;
+    } else {
+      const currentOverride = producto.price_override;
+      const shouldSync = syncWithMl === true;
+      if (shouldSync && typeof currentOverride?.ml_price_last === "number" && currentOverride.ml_price_last > 0) {
+        producto.price = currentOverride.ml_price_last;
+        producto.last_valid_price = currentOverride.ml_price_last;
+        producto.price_invalid = false;
+        producto.price_invalid_reason = null;
+        producto.price_invalid_at = null;
+      }
+      producto.price_override = undefined;
+    }
+
+    await producto.save();
+
+    const refreshed = await Producto.findOne({ ml_id }).populate('variantes').lean();
+    return res.json({
+      success: true,
+      producto: refreshed,
+      override_active: refreshed?.price_override?.active === true,
+    });
+  } catch (error: any) {
+    console.error("❌ Error aplicando override de precio:", error);
+    return res.status(500).json({ error: "Error aplicando override de precio", message: error.message });
   }
 });
 
