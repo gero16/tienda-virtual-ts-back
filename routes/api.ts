@@ -11,6 +11,8 @@ import Variante from "../models/Variante"; // 🆕 Importar el modelo de Variant
 import CuponModel from "../models/Cupon"; // 🆕 Importar modelo de Cupón
 import Usuario from "../models/Usuario";
 
+const SUPER_ADMIN_EMAIL = "geronicola1696@gmail.com";
+
 const router = Router();
 
 // =====================
@@ -676,6 +678,26 @@ router.patch("/admin/notifications/:id/read", authenticate, authorize("admin"), 
   } catch (error: any) {
     console.error(colors.red("❌ Error marcando notificación como leída:"), error);
     return res.status(500).json({ error: "Error marcando como leída", message: error.message });
+  }
+});
+
+router.delete("/admin/notifications/:id", authenticate, authorize("admin"), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    // @ts-ignore
+    const user = (req.user || {}) as { email?: string; id?: string };
+    if (!user?.email || user.email.toLowerCase() !== SUPER_ADMIN_EMAIL.toLowerCase()) {
+      return res.status(403).json({ error: "Prohibido" });
+    }
+    const notif = await AdminNotification.findById(id);
+    if (!notif) {
+      return res.status(404).json({ error: "Notificación no encontrada" });
+    }
+    await AdminNotification.findByIdAndDelete(id);
+    return res.json({ success: true, id });
+  } catch (error: any) {
+    console.error(colors.red("❌ Error eliminando notificación:"), error);
+    return res.status(500).json({ error: "Error eliminando notificación", message: error.message });
   }
 });
 
