@@ -9,6 +9,7 @@ export interface IProducto extends Document {
   price_invalid?: boolean;
   price_invalid_reason?: string | null;
   price_invalid_at?: Date | null;
+  hidden_by_price_issue?: boolean;
   price_override?: {
     active: boolean;
     value?: number;
@@ -131,6 +132,7 @@ const ProductoSchema = new Schema<IProducto>({
   price_invalid: { type: Boolean, default: false },
   price_invalid_reason: { type: String, default: null },
   price_invalid_at: { type: Date, default: null },
+  hidden_by_price_issue: { type: Boolean, default: false },
   price_override: {
     active: { type: Boolean, default: false },
     value: { type: Number },

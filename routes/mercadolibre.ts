@@ -207,6 +207,7 @@ function evaluatePriceForUpdate(rawPrice: any, existingProduct: any, context: Pr
       price_invalid: false,
       price_invalid_reason: null,
       price_invalid_at: null,
+      hidden_by_price_issue: false,
     };
 
     if (overrideValue !== null) {
@@ -247,6 +248,7 @@ function evaluatePriceForUpdate(rawPrice: any, existingProduct: any, context: Pr
     price_invalid: isInvalid,
     price_invalid_reason: isInvalid ? reason : null,
     price_invalid_at: isInvalid ? now : null,
+    hidden_by_price_issue: isInvalid ? true : false,
   };
 
   if (!isInvalid && Number.isFinite(numeric)) {
@@ -1496,6 +1498,7 @@ router.post("/admin/productos/:ml_id/clear-invalid-price", authenticate, authori
     producto.price_invalid = false;
     producto.price_invalid_reason = null;
     producto.price_invalid_at = null;
+    producto.hidden_by_price_issue = false;
     if (fallback && fallback > 0) {
       producto.price = fallback;
     }
@@ -1541,6 +1544,7 @@ router.put("/admin/productos/:ml_id/price-override", authenticate, authorize("ad
       producto.price_invalid = false;
       producto.price_invalid_reason = null;
       producto.price_invalid_at = null;
+      producto.hidden_by_price_issue = false;
       producto.price_override = {
         active: true,
         value: parsedValue,
@@ -1559,6 +1563,9 @@ router.put("/admin/productos/:ml_id/price-override", authenticate, authorize("ad
         producto.price_invalid = false;
         producto.price_invalid_reason = null;
         producto.price_invalid_at = null;
+        producto.hidden_by_price_issue = false;
+      } else {
+        producto.hidden_by_price_issue = false;
       }
       producto.price_override = undefined;
     }
@@ -1604,6 +1611,7 @@ router.get(["/categories/:categoryIds/productos", "/categories/productos"], asyn
     const baseFilter: any = {
       archivado: { $ne: true },
       $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ],
+      hidden_by_price_issue: { $ne: true },
       category_id: { $in: categoryIds }
     };
     if (status && status !== 'all') {
@@ -1895,7 +1903,8 @@ router.get("/productos/bestsellers", async (req: Request, res: Response) => {
     
     const productos = await Producto.find({
       status: { $ne: 'paused' },
-      sold_quantity: { $gt: 0 }
+      sold_quantity: { $gt: 0 },
+      hidden_by_price_issue: { $ne: true },
     })
     .select('ml_id title price sold_quantity main_image images status metrics descuento permalink') // Solo campos necesarios
     .sort({ sold_quantity: -1 })
@@ -1918,7 +1927,8 @@ router.get("/productos/featured", async (req: Request, res: Response) => {
     const productosDestacadosManuales = await Producto.find({
       destacado: true,
       status: { $ne: 'paused' },
-      available_quantity: { $gt: 0 }
+      available_quantity: { $gt: 0 },
+      hidden_by_price_issue: { $ne: true },
     })
     .select('ml_id title price main_image images status metrics health descuento available_quantity permalink categoria variantes')
     .populate('variantes')
@@ -1937,7 +1947,8 @@ router.get("/productos/featured", async (req: Request, res: Response) => {
     const productos = await Producto.find({
       destacado: { $ne: true }, // Excluir los ya destacados manualmente
       status: { $ne: 'paused' },
-      available_quantity: { $gt: 0 }
+      available_quantity: { $gt: 0 },
+      hidden_by_price_issue: { $ne: true },
     })
     .select('ml_id title price main_image images status metrics health descuento available_quantity permalink categoria variantes')
     .populate('variantes')
@@ -2012,6 +2023,7 @@ router.get("/home/categories", async (req: Request, res: Response) => {
       const p = await Producto.findOne({
         category_id: { $in: g.mlCategories },
         status: { $ne: 'paused' },
+        hidden_by_price_issue: { $ne: true },
         $or: [ { 'images.0': { $exists: true } }, { main_image: { $exists: true, $ne: null } } ]
       })
       .select('images main_image sold_quantity health')
@@ -2136,6 +2148,7 @@ router.get("/productos/discounted", async (req: Request, res: Response) => {
       'descuento.activo': true,
       status: 'active',
       available_quantity: { $gt: 0 },
+      hidden_by_price_issue: { $ne: true },
       $or: [
         { 'images.0.url': { $exists: true } },
         { main_image: { $exists: true, $ne: null } }
@@ -2158,7 +2171,7 @@ router.get("/productos/:id", async (req: Request, res: Response) => {
     const { id } = req.params;
     const producto = await Producto.findOne({ ml_id: id }).populate("variantes");
     
-    if (!producto) {
+    if (!producto || producto.hidden_by_price_issue) {
       return res.status(404).json({ error: "Producto no encontrado" });
     }
     
@@ -6183,7 +6196,8 @@ router.get("/productos", async (req: Request, res: Response) => {
     // Filtro base (excluir archivados y duplicados apuntados)
     const baseFilter: any = {
       archivado: { $ne: true },
-      $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ]
+      $or: [ { duplicate_of_ml_id: null }, { duplicate_of_ml_id: { $exists: false } } ],
+      hidden_by_price_issue: { $ne: true },
     };
     const andClauses: any[] = [ baseFilter ];
     if (status && (status === 'active' || status === 'paused')) {
