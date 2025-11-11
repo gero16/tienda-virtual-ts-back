@@ -204,7 +204,37 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
         }
       } catch {}
 
-      const precioFuente = producto.price; // precio almacenado (mismo número que ML)
+      // Determinar precio efectivo considerando descuentos manuales o de ML
+      let precioFuente = producto.price; // precio almacenado (mismo número que ML)
+      let fuenteDescuento: 'manual' | 'ml' | null = null;
+
+      // Descuento manual configurado desde la web
+      if (producto.descuento?.activo) {
+        const porcentaje = Number(producto.descuento.porcentaje || 0);
+        const precioOriginal =
+          typeof producto.descuento.precio_original === "number" && producto.descuento.precio_original > 0
+            ? producto.descuento.precio_original
+            : producto.price;
+
+        if (porcentaje > 0) {
+          const precioCalculado = Math.round(precioOriginal * (1 - porcentaje / 100) * 100) / 100;
+          precioFuente = Math.min(precioCalculado, producto.price ?? precioCalculado);
+          fuenteDescuento = "manual";
+        } else if (producto.price > 0 && producto.descuento.precio_original && producto.price < producto.descuento.precio_original) {
+          // Si no hay porcentaje pero el precio ya está rebajado, respetar precio actual
+          precioFuente = producto.price;
+          fuenteDescuento = "manual";
+        }
+      }
+
+      // Descuento nativo de MercadoLibre (si existe y no se aplicó manual)
+      if (!fuenteDescuento && producto.descuento_ml?.original_price) {
+        const precioOriginalML = producto.descuento_ml.original_price;
+        if (precioOriginalML > 0 && producto.price > 0 && producto.price < precioOriginalML) {
+          precioFuente = producto.price;
+          fuenteDescuento = "ml";
+        }
+      }
       // Convertir a moneda objetivo
       let unitPriceTarget = precioFuente;
       if (targetCurrency === 'USD') {
