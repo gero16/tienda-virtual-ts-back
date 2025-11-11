@@ -233,6 +233,168 @@ function evaluatePriceForUpdate(rawPrice: any, existingProduct: any, context: Pr
   };
 }
 
+const PROMOTION_TYPES = new Set([
+  "deal_price",
+  "promotion",
+  "promotion_pack",
+  "promotion_campaign",
+  "campaign",
+  "deal",
+  "offer",
+]);
+
+function toPositiveNumber(value: any): number | null {
+  const numeric =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(numeric)) return null;
+  if (numeric <= 0) return null;
+  return numeric;
+}
+
+function extractActivePriceFromPricePayload(priceInfo: any) {
+  const result: {
+    price: number | null;
+    originalPrice: number | null;
+    entry: any;
+    source: string;
+  } = {
+    price: null,
+    originalPrice: null,
+    entry: null,
+    source: "unknown",
+  };
+
+  if (!priceInfo) return result;
+
+  const pricesNode = priceInfo?.prices ?? priceInfo;
+  const entries = Array.isArray(pricesNode?.prices)
+    ? pricesNode.prices.filter((entry: any) => entry && typeof entry === "object")
+    : [];
+
+  const normalizeStatus = (status: any) => String(status ?? "").toLowerCase();
+  const normalizeType = (type: any) => String(type ?? "").toLowerCase();
+
+  const activeEntries = entries.filter(
+    (entry: any) => normalizeStatus(entry?.status) === "active"
+  );
+
+  const prioritizedEntry =
+    activeEntries.find((entry: any) =>
+      PROMOTION_TYPES.has(normalizeType(entry?.type))
+    ) || null;
+
+  const fallbackActiveEntry =
+    activeEntries.find((entry: any) => toPositiveNumber(entry?.amount) !== null) ||
+    null;
+
+  const chosenEntry = prioritizedEntry || fallbackActiveEntry || null;
+
+  if (chosenEntry) {
+    const amount = toPositiveNumber(chosenEntry.amount);
+    if (amount !== null) {
+      result.price = amount;
+      result.entry = chosenEntry;
+      result.source = "prices.prices.active";
+    }
+
+    const regular = toPositiveNumber(chosenEntry.regular_amount);
+    if (regular !== null) {
+      result.originalPrice = regular;
+    }
+  }
+
+  const presentationNode = pricesNode?.presentation;
+  if (result.price === null && presentationNode) {
+    const presentationPrice = toPositiveNumber(presentationNode.price);
+    if (presentationPrice !== null) {
+      result.price = presentationPrice;
+      result.source = "presentation";
+    }
+    const presentationOriginal =
+      toPositiveNumber(presentationNode.original_amount) ??
+      toPositiveNumber((presentationNode as any).originalPrice) ??
+      toPositiveNumber(priceInfo?.original_price);
+    if (presentationOriginal !== null) {
+      result.originalPrice = presentationOriginal;
+    }
+  }
+
+  if (result.price === null) {
+    const basePrice =
+      toPositiveNumber(pricesNode?.base_price) ??
+      toPositiveNumber(priceInfo?.base_price);
+    if (basePrice !== null) {
+      result.price = basePrice;
+      result.source = "base_price";
+    }
+  }
+
+  if (result.price === null) {
+    const fallbackPrice = toPositiveNumber(priceInfo?.price);
+    if (fallbackPrice !== null) {
+      result.price = fallbackPrice;
+      result.source = "price";
+    }
+  }
+
+  if (result.originalPrice === null) {
+    const referenceEntry = Array.isArray(pricesNode?.reference_prices)
+      ? pricesNode.reference_prices.find(
+          (ref: any) =>
+            normalizeType(ref?.type) === "standard" &&
+            toPositiveNumber(ref?.amount) !== null
+        )
+      : null;
+    if (referenceEntry) {
+      const refAmount = toPositiveNumber(referenceEntry.amount);
+      if (refAmount !== null) {
+        result.originalPrice = refAmount;
+      }
+    }
+  }
+
+  if (result.originalPrice === null) {
+    const directOriginal =
+      toPositiveNumber(priceInfo?.original_price) ??
+      toPositiveNumber(priceInfo?.prices?.original_price);
+    if (directOriginal !== null) {
+      result.originalPrice = directOriginal;
+    }
+  }
+
+  return result;
+}
+
+function collectDealIds(entry: any): string[] | undefined {
+  if (!entry || typeof entry !== "object") return undefined;
+  const ids = new Set<string>();
+  const add = (value: any) => {
+    if (typeof value === "number" || typeof value === "string") {
+      const str = String(value).trim();
+      if (str) ids.add(str);
+    }
+  };
+
+  add(entry.id);
+  add((entry as any).deal_id);
+  add((entry as any).dealId);
+  add((entry as any).promotion_id);
+  add((entry as any).promotionId);
+
+  const metadata = entry.metadata;
+  if (metadata && typeof metadata === "object") {
+    add(metadata.deal_id);
+    add(metadata.promotion_id);
+    add(metadata.promotion_reference_id);
+  }
+
+  return ids.size > 0 ? Array.from(ids) : undefined;
+}
+
 // -------------------- HANDLERS --------------------
 interface NotificationParams {
   resource: string;
@@ -275,28 +437,85 @@ async function handlePriceNotification(resourceUrl: string, accessToken: string)
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
-    const newPrice =
-      priceInfo.prices?.presentation?.price || priceInfo.prices?.prices?.[0]?.amount || null;
-
     const itemId = resourceUrl.split("/")[2];
+
+    const extracted = extractActivePriceFromPricePayload(priceInfo);
+    let newPrice = extracted.price;
+    let mlOriginalPrice = extracted.originalPrice;
+
+    if (newPrice === null || typeof newPrice === "undefined") {
+      try {
+        const { data: itemDetail } = await axios.get(
+          `https://api.mercadolibre.com/items/${itemId}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        const detailPrice = toPositiveNumber(itemDetail?.price);
+        if (detailPrice !== null) {
+          newPrice = detailPrice;
+        }
+        const detailOriginal = toPositiveNumber(itemDetail?.original_price);
+        if (detailOriginal !== null) {
+          mlOriginalPrice = detailOriginal;
+        }
+      } catch (detailError: any) {
+        console.warn(
+          `⚠️ No se pudo obtener detalle del item ${itemId} para confirmar precio:`,
+          detailError.message || detailError
+        );
+      }
+    }
 
     console.log("💰 Cambio de precio detectado:", {
       item_id: itemId,
       new_price: newPrice,
+      ml_original_price: mlOriginalPrice,
+      price_source: extracted.source,
+      promotion_type: extracted.entry?.type ?? null,
       updated_at: new Date(),
     });
 
     const existingProduct = await Producto.findOne({ ml_id: itemId }).lean();
-    const { fields } = evaluatePriceForUpdate(newPrice, existingProduct, {
+    const priceEvaluation = evaluatePriceForUpdate(newPrice, existingProduct, {
       source: 'price_notification',
       ml_id: itemId,
       metadata: {
         resourceUrl,
         title: existingProduct?.title,
+        priceSource: extracted.source,
+        promotionType: extracted.entry?.type ?? null,
+        promotionId:
+          extracted.entry?.promotion_id ??
+          extracted.entry?.metadata?.promotion_id ??
+          null,
+        presentationPrice: priceInfo?.prices?.presentation?.price ?? null,
       },
     });
 
-    await Producto.updateOne({ ml_id: itemId }, { $set: fields });
+    const updateOps: any = { $set: priceEvaluation.fields };
+
+    if (!priceEvaluation.isInvalid) {
+      const discountActive =
+        typeof mlOriginalPrice === "number" && mlOriginalPrice > priceEvaluation.price;
+
+      if (discountActive) {
+        const descuentoML: any = {
+          original_price: mlOriginalPrice,
+        };
+        const dealIds = collectDealIds(extracted.entry);
+        if (dealIds && dealIds.length > 0) {
+          descuentoML.deal_ids = dealIds;
+        }
+        updateOps.$set.descuento_ml = descuentoML;
+      } else if (
+        existingProduct?.descuento_ml &&
+        typeof mlOriginalPrice === "number" &&
+        mlOriginalPrice <= priceEvaluation.price
+      ) {
+        updateOps.$unset = { ...(updateOps.$unset ?? {}), descuento_ml: "" };
+      }
+    }
+
+    await Producto.updateOne({ ml_id: itemId }, updateOps);
   } catch (error: any) {
     if (error.response?.status === 401) {
       const freshToken = await getCurrentToken();
