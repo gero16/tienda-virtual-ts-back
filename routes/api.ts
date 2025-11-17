@@ -2,6 +2,7 @@ import mercadopago from "mercadopago";
 import express, { Router, Request, Response } from "express";
 import colors from "colors";
 import mongoose from "mongoose"; // 🆕 Para transacciones atómicas
+import axios from "axios";
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre, propagateStockToGroup } from "./mercadolibre"; // 🆕 Importar funciones de ML
@@ -1430,6 +1431,116 @@ router.post("/process_payment", async (req: Request, res: Response) => {
     return res.status(500).json({ 
       error: "Error interno del servidor", 
       message: error.message 
+    });
+  }
+});
+
+// =====================
+// Obtener información de producto (BD + MercadoLibre)
+// =====================
+router.get("/producto/:id/info", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    
+    // Buscar producto en BD por ml_id o _id
+    let productoBD = await ProductoModel.findOne({ 
+      $or: [
+        { ml_id: id },
+        { _id: id }
+      ]
+    }).lean();
+    
+    if (!productoBD) {
+      return res.status(404).json({ 
+        error: "Producto no encontrado en la base de datos" 
+      });
+    }
+    
+    // Obtener información de MercadoLibre
+    let infoML: any = null;
+    let errorML: string | null = null;
+    
+    try {
+      const token = await getCurrentToken();
+      if (!token) {
+        errorML = "No se pudo obtener token de MercadoLibre";
+      } else {
+        const mlId = productoBD.ml_id;
+        
+        // Obtener información completa del producto desde ML
+        const response = await axios.get(
+          `https://api.mercadolibre.com/items/${mlId}`,
+          {
+            headers: { Authorization: `Bearer ${token.access_token}` }
+          }
+        );
+        
+        const mlData = response.data;
+        
+        // Extraer información importante de ML
+        infoML = {
+          ml_id: mlData.id,
+          title: mlData.title,
+          price: mlData.price,
+          available_quantity: mlData.available_quantity, // Stock en ML
+          sold_quantity: mlData.sold_quantity,
+          status: mlData.status,
+          condition: mlData.condition,
+          permalink: mlData.permalink,
+          category_id: mlData.category_id,
+          listing_type_id: mlData.listing_type_id,
+          health: mlData.health,
+          shipping: {
+            mode: mlData.shipping?.mode,
+            free_shipping: mlData.shipping?.free_shipping,
+            logistic_type: mlData.shipping?.logistic_type
+          },
+          date_created: mlData.date_created,
+          last_updated: mlData.last_updated
+        };
+      }
+    } catch (mlError: any) {
+      console.error(colors.red("❌ Error obteniendo info de ML:"), mlError);
+      errorML = mlError.response?.data?.message || mlError.message || "Error desconocido";
+    }
+    
+    // Preparar respuesta con información importante
+    const respuesta = {
+      producto_bd: {
+        _id: productoBD._id,
+        ml_id: productoBD.ml_id,
+        title: productoBD.title,
+        price: productoBD.price,
+        available_quantity: productoBD.available_quantity, // Stock en BD
+        status: productoBD.status,
+        seller_sku: productoBD.seller_sku,
+        catalog_product_id: productoBD.catalog_product_id,
+        es_catalogo: productoBD.es_catalogo,
+        tipo_venta: productoBD.tipo_venta,
+        stock_fisico: productoBD.stock_fisico,
+        last_updated: productoBD.last_updated
+      },
+      producto_ml: infoML,
+      comparacion_stock: {
+        stock_bd: productoBD.available_quantity,
+        stock_ml: infoML?.available_quantity ?? null,
+        diferencia: infoML?.available_quantity !== null 
+          ? (productoBD.available_quantity - infoML.available_quantity)
+          : null,
+        sincronizado: infoML?.available_quantity !== null 
+          ? (productoBD.available_quantity === infoML.available_quantity)
+          : null
+      },
+      error_ml: errorML
+    };
+    
+    return res.json(respuesta);
+    
+  } catch (error: any) {
+    console.error(colors.red("❌ Error obteniendo info de producto:"), error);
+    return res.status(500).json({ 
+      error: "Error obteniendo información del producto", 
+      details: error.message 
     });
   }
 });
