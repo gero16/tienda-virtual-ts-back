@@ -1546,6 +1546,110 @@ router.get("/producto/:id/info", async (req: Request, res: Response) => {
 });
 
 // =====================
+// Obtener información SOLO de MercadoLibre (sin requerir BD)
+// =====================
+router.get("/ml/producto/:ml_id/info", async (req: Request, res: Response) => {
+  try {
+    const { ml_id } = req.params;
+    
+    if (!ml_id) {
+      return res.status(400).json({ 
+        error: "Se requiere ml_id del producto" 
+      });
+    }
+    
+    // Obtener información de MercadoLibre
+    let infoML: any = null;
+    let errorML: string | null = null;
+    
+    try {
+      const token = await getCurrentToken();
+      if (!token) {
+        errorML = "No se pudo obtener token de MercadoLibre";
+      } else {
+        // Obtener información completa del producto desde ML
+        const response = await axios.get(
+          `https://api.mercadolibre.com/items/${ml_id}`,
+          {
+            headers: { Authorization: `Bearer ${token.access_token}` }
+          }
+        );
+        
+        const mlData = response.data;
+        
+        // Extraer información importante de ML
+        infoML = {
+          ml_id: mlData.id,
+          title: mlData.title,
+          price: mlData.price,
+          available_quantity: mlData.available_quantity, // Stock en ML
+          sold_quantity: mlData.sold_quantity,
+          status: mlData.status,
+          condition: mlData.condition,
+          permalink: mlData.permalink,
+          category_id: mlData.category_id,
+          listing_type_id: mlData.listing_type_id,
+          health: mlData.health,
+          shipping: {
+            mode: mlData.shipping?.mode,
+            free_shipping: mlData.shipping?.free_shipping,
+            logistic_type: mlData.shipping?.logistic_type,
+            handling_time: mlData.shipping?.handling_time
+          },
+          date_created: mlData.date_created,
+          last_updated: mlData.last_updated,
+          pictures: mlData.pictures?.map((pic: any) => ({
+            id: pic.id,
+            url: pic.url,
+            secure_url: pic.secure_url
+          })),
+          attributes: mlData.attributes?.map((attr: any) => ({
+            id: attr.id,
+            name: attr.name,
+            value_id: attr.value_id,
+            value_name: attr.value_name
+          })),
+          warranty: mlData.warranty,
+          currency_id: mlData.currency_id,
+          initial_quantity: mlData.initial_quantity,
+          variations: mlData.variations
+        };
+      }
+    } catch (mlError: any) {
+      console.error(colors.red("❌ Error obteniendo info de ML:"), mlError);
+      errorML = mlError.response?.data?.message || mlError.message || "Error desconocido";
+    }
+    
+    if (errorML) {
+      return res.status(500).json({
+        error: "Error obteniendo información de MercadoLibre",
+        details: errorML,
+        ml_id: ml_id
+      });
+    }
+    
+    if (!infoML) {
+      return res.status(404).json({
+        error: "No se pudo obtener información del producto",
+        ml_id: ml_id
+      });
+    }
+    
+    return res.json({
+      success: true,
+      producto_ml: infoML
+    });
+    
+  } catch (error: any) {
+    console.error(colors.red("❌ Error obteniendo info de ML:"), error);
+    return res.status(500).json({ 
+      error: "Error obteniendo información del producto", 
+      details: error.message 
+    });
+  }
+});
+
+// =====================
 // Health check endpoint
 // =====================
 router.get("/health", (req: Request, res: Response) => {

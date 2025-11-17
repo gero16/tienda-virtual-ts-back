@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden";
 import CuponModel from "../models/Cupon";
-import { getCurrentToken, updateStockInMercadoLibre, propagateStockToGroup } from "./mercadolibre";
+import { getCurrentToken, updateStockInMercadoLibre, propagateStockToGroup, getCurrentStockFromMercadoLibre } from "./mercadolibre";
 import AdminNotification from "../models/AdminNotification";
 import { ClienteService } from "../services/clienteService";
 
@@ -170,9 +170,16 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
             const producto = await ProductoModel.findOne({ ml_id: item.id });
             
             if (producto) {
-              const nuevoStockML = Math.max(0, producto.available_quantity);
-              
               try {
+                // 🔧 OBTENER STOCK ACTUAL DESDE MERCADOLIBRE (no de la BD local)
+                const currentStockML = await getCurrentStockFromMercadoLibre(producto.ml_id, token.access_token);
+                
+                // 🔧 CALCULAR NUEVO STOCK RESTANDO LA CANTIDAD COMPRADA
+                const nuevoStockML = Math.max(0, currentStockML - item.quantity);
+                
+                console.log(colors.blue(`      📦 Producto: ${item.title || producto.title}`));
+                console.log(colors.blue(`      📊 Stock actual ML: ${currentStockML} → Nuevo stock: ${nuevoStockML} (restando ${item.quantity})`));
+                
                 await updateStockInMercadoLibre(
                   producto.ml_id, 
                   nuevoStockML, 
@@ -180,9 +187,9 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
                 );
                 // 🆕 Propagar al grupo (catálogo/GTIN)
                 await propagateStockToGroup(producto.ml_id, nuevoStockML, token.access_token);
-                console.log(colors.green(`      ✅ MercadoLibre - ${item.title}: Stock propagado a grupo con ${nuevoStockML}`));
+                console.log(colors.green(`      ✅ MercadoLibre - ${item.title || producto.title}: Stock actualizado y propagado a grupo con ${nuevoStockML}`));
               } catch (mlError: any) {
-                console.log(colors.red(`      ❌ Error actualizando en ML para ${item.title}: ${mlError.message}`));
+                console.log(colors.red(`      ❌ Error actualizando en ML para ${item.title || producto.title}: ${mlError.message}`));
                 // No hacer rollback de la transacción, el stock en BD ya se actualizó correctamente
               }
             }
@@ -197,6 +204,73 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         console.log(colors.red("      ❌ Error obteniendo token de ML:"), tokenError);
         console.log(colors.yellow("      ⚠️  Stock actualizado en BD, pero NO en MercadoLibre"));
       }
+      }
+
+      // 🔄 RESTAURAR STOCK si el pago cambió de approved a rejected/cancelled/refunded
+      const estadosQueRequierenRestauracion = ['rejected', 'cancelled', 'refunded', 'partially_refunded'];
+      const estadoAnterior = ordenExistente?.payment_status || ordenExistente?.status;
+      const eraAprobado = estadoAnterior === 'approved' || ordenExistente?.status === 'approved';
+      const requiereRestauracion = eraAprobado && estadosQueRequierenRestauracion.includes(paymentData.status);
+      
+      if (requiereRestauracion) {
+        console.log(colors.yellow(`   🔄 Restaurando stock (pago cambió de approved a ${paymentData.status})...`));
+        
+        // Restaurar stock en BD local
+        for (const item of itemsFromMetadata) {
+          const producto = await ProductoModel.findOne({ ml_id: item.id }).session(session);
+          if (producto) {
+            const nuevoStock = producto.available_quantity + item.quantity;
+            await ProductoModel.updateOne(
+              { ml_id: item.id },
+              { $set: { available_quantity: nuevoStock } },
+              { session }
+            );
+            console.log(colors.green(`      ✅ BD Local - ${item.title}: ${producto.available_quantity} → ${nuevoStock} (restaurado +${item.quantity})`));
+          }
+        }
+        
+        // Restaurar stock en MercadoLibre
+        try {
+          const token = await getCurrentToken();
+          
+          if (token) {
+            console.log(colors.blue("      🔑 Token de MercadoLibre obtenido para restauración"));
+            
+            for (const item of itemsFromMetadata) {
+              const producto = await ProductoModel.findOne({ ml_id: item.id });
+              
+              if (producto) {
+                try {
+                  // Obtener stock actual desde MercadoLibre
+                  const currentStockML = await getCurrentStockFromMercadoLibre(producto.ml_id, token.access_token);
+                  
+                  // Calcular nuevo stock sumando la cantidad (restaurar)
+                  const nuevoStockML = currentStockML + item.quantity;
+                  
+                  console.log(colors.blue(`      📦 Producto: ${item.title || producto.title}`));
+                  console.log(colors.blue(`      📊 Stock actual ML: ${currentStockML} → Nuevo stock: ${nuevoStockML} (restaurando +${item.quantity})`));
+                  
+                  await updateStockInMercadoLibre(
+                    producto.ml_id, 
+                    nuevoStockML, 
+                    token.access_token
+                  );
+                  // Propagar al grupo (catálogo/GTIN)
+                  await propagateStockToGroup(producto.ml_id, nuevoStockML, token.access_token);
+                  console.log(colors.green(`      ✅ MercadoLibre - ${item.title || producto.title}: Stock restaurado y propagado a grupo con ${nuevoStockML}`));
+                } catch (mlError: any) {
+                  console.log(colors.red(`      ❌ Error restaurando stock en ML para ${item.title || producto.title}: ${mlError.message}`));
+                }
+              }
+            }
+            
+            console.log(colors.green("   ✅ Stock restaurado en MercadoLibre"));
+          } else {
+            console.log(colors.yellow("      ⚠️  No se pudo obtener token de MercadoLibre para restauración"));
+          }
+        } catch (tokenError) {
+          console.log(colors.red("      ❌ Error obteniendo token de ML para restauración:"), tokenError);
+        }
       }
 
       // Obtener información del cupón si existe
