@@ -1267,7 +1267,13 @@ router.post("/process_payment", async (req: Request, res: Response) => {
         currency: 'UYU',
         date_created: new Date(),
         date_approved: response.body.date_approved ? new Date(response.body.date_approved) : undefined,
-        status: 'approved'
+        status: response.body.status === 'approved' ? 'approved' : 
+                response.body.status === 'rejected' ? 'rejected' : 
+                response.body.status === 'cancelled' ? 'cancelled' : 'pending',
+        // Agregar información detallada en notes sobre el tipo de pending
+        notes: response.body.status === 'pending' && response.body.status_detail 
+          ? `Estado: ${response.body.status} | Tipo: ${response.body.status_detail} | Método: ${response.body.payment_method_id || 'N/A'} | Cuotas: ${response.body.installments || 1} | Live: ${response.body.live_mode !== false} | ExtRef: ${external_reference || 'N/A'}`
+          : `estado=${response.body.status}; detalle=${response.body.status_detail || 'N/A'}; metodo=${response.body.payment_method_id || 'N/A'}; cuotas=${response.body.installments || 1}; tipo=${response.body.payment_type_id || 'N/A'}; live_mode=${response.body.live_mode !== false}; ext_ref=${external_reference || 'N/A'}`
       };
 
       const nuevaOrden = new Orden(ordenData);
@@ -1276,10 +1282,33 @@ router.post("/process_payment", async (req: Request, res: Response) => {
       console.log(colors.green("💾 Orden guardada en la base de datos:"));
       // 🆕 Crear notificación para admin (siempre que llegue aquí)
       try {
+        // Construir mensaje con información detallada del estado
+        let notificationMessage = `Nueva orden ${ordenData.orden_id} - ${response.body.status.toUpperCase()}`;
+        
+        // Si es pending, agregar información sobre el tipo de pending
+        if (response.body.status === 'pending' && response.body.status_detail) {
+          const pendingTypes: Record<string, string> = {
+            'pending_contingency': 'en revisión automática',
+            'pending_review_manual': 'requiere revisión manual',
+            'pending_waiting_payment': 'esperando confirmación de pago',
+            'pending_waiting_transfer': 'esperando transferencia',
+            'pending_capture': 'pendiente de captura'
+          };
+          const pendingType = pendingTypes[response.body.status_detail] || response.body.status_detail;
+          notificationMessage += ` (${pendingType})`;
+        }
+        
+        // Agregar información de cuotas si aplica
+        if (response.body.installments && response.body.installments > 1) {
+          notificationMessage += ` - ${response.body.installments} cuotas`;
+        }
+        
+        notificationMessage += ` - $${transaction_amount}`;
+        
         await AdminNotification.create({
           type: "order",
           status: "unread",
-          message: `Nueva orden ${ordenData.orden_id} - ${response.body.status.toUpperCase()} - $${transaction_amount}`,
+          message: notificationMessage,
           order_id: ordenData.orden_id,
           payment_id: response.body.id?.toString?.() || undefined,
           customer_email: (customer?.email || payer?.email) as string,

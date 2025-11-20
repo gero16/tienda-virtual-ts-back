@@ -91,14 +91,32 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     console.log(colors.yellow(`   🔄 Procesando estado: ${paymentData.status}`));
 
     // Verificar si ya existe por payment_id o external_reference
-    const ordenExistente = await Orden.findOne({
-      $or: [
-        { payment_id: paymentId.toString() },
-        { external_reference: paymentData.external_reference }
-      ]
+    // Buscar primero por payment_id (más específico)
+    let ordenExistente = await Orden.findOne({
+      payment_id: paymentId.toString()
     });
+    
+    // Si no existe, buscar por external_reference
+    // Esto es importante para actualizar órdenes creadas al generar la preferencia
+    if (!ordenExistente && paymentData.external_reference) {
+      ordenExistente = await Orden.findOne({
+        external_reference: paymentData.external_reference,
+        // Solo buscar órdenes que sean de "preferencia creada" o que no tengan payment_id real
+        $or: [
+          { payment_status_detail: 'preference_created' },
+          { payment_id: { $in: ['N/A', null, ''] } },
+          { payment_id: { $regex: /^pref-/i } } // IDs de preferencia suelen empezar con "pref-"
+        ]
+      });
+      
+      if (ordenExistente) {
+        console.log(colors.cyan(`   🔄 Encontrada orden de preferencia creada (${ordenExistente.orden_id}), se actualizará con el pago real`));
+      }
+    }
 
-    console.log(colors.green("   ✅ Registrando/actualizando orden..."));
+    console.log(ordenExistente 
+      ? colors.green("   ♻️ Actualizando orden existente...") 
+      : colors.green("   ✅ Creando nueva orden..."));
 
     // Iniciar transacción de MongoDB
     const session = await mongoose.startSession();
@@ -441,10 +459,22 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       };
       let finalOrderId: string | undefined;
       if (ordenExistente) {
+        // Si la orden existente era solo una "preferencia creada", actualizarla con el pago real
+        const eraPreferencia = ordenExistente.payment_status_detail === 'preference_created' || 
+                               ordenExistente.payment_id === 'N/A' ||
+                               !ordenExistente.payment_id ||
+                               String(ordenExistente.payment_id).startsWith('pref-');
+        
+        if (eraPreferencia) {
+          console.log(colors.cyan(`   🔄 Actualizando orden de preferencia (${ordenExistente.orden_id}) con pago real (${paymentId})`));
+          // Actualizar con información del pago real
+          baseOrden.notes = `[ACTUALIZADA] Orden iniciada como preferencia, ahora con pago real. Payment ID: ${paymentId} | Estado: ${paymentData.status} | Detalle: ${paymentData.status_detail}`;
+        }
+        
         // Usar $set para actualizar solo los campos necesarios
         await Orden.updateOne({ _id: ordenExistente._id }, { $set: baseOrden }, { session });
         finalOrderId = ordenExistente.orden_id;
-        console.log(colors.green("   ♻️ Orden actualizada"));
+        console.log(colors.green(`   ♻️ Orden actualizada (${eraPreferencia ? 'de preferencia a pago real' : 'con nuevo estado'})`));
       } else {
         const nuevaOrden = new Orden(baseOrden);
         await nuevaOrden.save({ session });
@@ -658,10 +688,22 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
           }
           
           if (status === 'pending') {
-            // Si es pending con detalles específicos, agregar información
-            if (detail === 'pending_contingency' || detail === 'pending_review_manual') {
-              message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | ⏳ ${friendlyDetail}`;
-            }
+            // Si es pending con detalles específicos, agregar información detallada
+            const pendingTypes: Record<string, string> = {
+              'pending_contingency': 'en revisión automática',
+              'pending_review_manual': 'requiere revisión manual',
+              'pending_waiting_payment': 'esperando confirmación de pago',
+              'pending_waiting_transfer': 'esperando transferencia',
+              'pending_capture': 'pendiente de captura'
+            };
+            const pendingType = pendingTypes[detail] || friendlyDetail || detail;
+            
+            // Agregar información de cuotas si aplica
+            const installmentsInfo = paymentData.installments && paymentData.installments > 1 
+              ? ` - ${paymentData.installments} cuotas` 
+              : '';
+            
+            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''}${installmentsInfo} | ⏳ ${pendingType}`;
           }
 
           await AdminNotification.create({

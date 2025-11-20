@@ -451,16 +451,17 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
         total: totalFinal, // Total después del descuento
         currency: targetCurrency,
         status: 'pending',
-        notes: `Checkout Pro preference created. pref_id=${response.body.id}`
+        notes: `[PREFERENCIA CREADA] Cliente redirigido a Mercado Pago. Pref ID: ${response.body.id} | Esta orden se actualizará cuando el cliente complete el pago. External Ref: ${external_reference}`
       });
       console.log(colors.green('💾 Orden pending registrada (preference_created)'));
 
-      // Notificación admin
+      // Notificación admin - Marcar claramente que es solo una preferencia creada
       try {
+        const cuponInfo = cuponValidado ? ` (con cupón ${cuponValidado.codigo})` : '';
         await AdminNotification.create({
           type: 'order',
           status: 'unread',
-          message: `Orden iniciada - ${targetCurrency} ${totalFinal}`,
+          message: `[PREFERENCIA CREADA] Cliente redirigido a Mercado Pago - ${targetCurrency} ${totalFinal}${cuponInfo} | ⏳ Esperando pago real`,
           order_id: ordenPending.orden_id,
           payment_id: response.body.id?.toString?.(),
           customer_email: customerData?.email || undefined,
