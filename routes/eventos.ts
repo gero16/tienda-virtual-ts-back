@@ -8,11 +8,11 @@ const router = Router();
 // Crear evento
 router.post("/", authenticate, authorize("admin"), async (req: Request, res: Response) => {
   try {
-    const { slug, titulo, descripcion, theme, fecha_inicio, fecha_fin, activo, subtitle, discount_text, discount_percentage } = req.body;
+    const { slug, titulo, descripcion, theme, fecha_inicio, fecha_fin, activo, subtitle, discount_text, discount_percentage, mostrar_boton } = req.body;
     if (!slug || !titulo) return res.status(400).json({ error: "slug y titulo son requeridos" });
     const existente = await Evento.findOne({ slug: slug.toLowerCase() });
     if (existente) return res.status(400).json({ error: "El slug ya existe" });
-    const evento = await Evento.create({ slug: slug.toLowerCase(), titulo, descripcion, theme, fecha_inicio, fecha_fin, activo, subtitle, discount_text, discount_percentage });
+    const evento = await Evento.create({ slug: slug.toLowerCase(), titulo, descripcion, theme, fecha_inicio, fecha_fin, activo, subtitle, discount_text, discount_percentage, mostrar_boton });
     return res.status(201).json({ success: true, evento });
   } catch (e: any) {
     return res.status(500).json({ error: "Error creando evento", message: e.message });

@@ -11,6 +11,7 @@ export interface IEvento extends Document {
   discount_percentage?: number; // porcentaje para aplicar a productos del evento
   fecha_inicio?: Date;
   fecha_fin?: Date;
+  mostrar_boton?: boolean; // mostrar/ocultar botón "¡Aprovecha Ahora!" en el banner
   productos_ml_ids: string[]; // Asociamos por ml_id para rapidez
   createdAt: Date;
   updatedAt: Date;
@@ -27,6 +28,7 @@ const EventoSchema = new Schema<IEvento>({
   discount_percentage: { type: Number, default: 0 },
   fecha_inicio: { type: Date },
   fecha_fin: { type: Date },
+  mostrar_boton: { type: Boolean, default: true }, // Por defecto mostrar el botón
   productos_ml_ids: { type: [String], default: [] },
 }, { timestamps: true });
 
