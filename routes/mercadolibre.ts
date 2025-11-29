@@ -3519,6 +3519,9 @@ async function robustSyncProductos() {
         { headers: { Authorization: `Bearer ${token.access_token}` } }
       );
 
+      // DEBUG UNIVERSAL: Mostrar info de todos los productos para rastrear bug de precios incluso en Railway
+      console.log(`[DEBUG][ML_API] id=${itemDetail.id} price=${itemDetail.price} original=${itemDetail.original_price} title="${itemDetail.title}"`); 
+
       // Obtener descripción por separado
       let description = "";
       try {
