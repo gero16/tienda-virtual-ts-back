@@ -5880,7 +5880,7 @@ router.post("/sync/descuentos-ml", async (req: Request, res: Response) => {
             // Si el precio en BD es igual al original, necesita actualizarse al rebajado
             // O si el precio rebajado de ML es diferente al precio en BD (y no hay descuento manual)
             const necesitaActualizacion = 
-              (Math.abs(precioActualBD - precioOriginalBD) < 0.01) || // Precio BD = precio original
+              (precioOriginalBD && Math.abs(precioActualBD - precioOriginalBD) < 0.01) || // Precio BD = precio original
               (producto.descuento?.activo === false && Math.abs(precioActualBD - precioRebajadoML) > 0.01); // Precio BD ≠ precio rebajado ML
 
             if (necesitaActualizacion) {
