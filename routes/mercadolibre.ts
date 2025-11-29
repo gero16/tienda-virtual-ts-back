@@ -1202,6 +1202,15 @@ async function forceUpdateProductos() {
       });
       const effectiveProductPrice = priceEvaluation.price;
 
+      // DEBUG: Auditar los valores crudos de la API de Mercado Libre para este producto específico
+      if (itemDetail.id === 'MLU693479060') {
+        console.log('[DEBUG] Detalle API ML:', {
+          price: itemDetail.price,
+          original_price: itemDetail.original_price,
+          title: itemDetail.title,
+        });
+      }
+
       // FORZAR el precio SIEMPRE al rebajado de ML si existe descuento ML
       if (itemDetail.original_price && itemDetail.original_price > itemDetail.price) {
         priceEvaluation.fields.price = itemDetail.price;
