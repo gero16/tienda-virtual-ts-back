@@ -1202,6 +1202,12 @@ async function forceUpdateProductos() {
       });
       const effectiveProductPrice = priceEvaluation.price;
 
+      // FORZAR el precio SIEMPRE al rebajado de ML si existe descuento ML
+      if (itemDetail.original_price && itemDetail.original_price > itemDetail.price) {
+        priceEvaluation.fields.price = itemDetail.price;
+        priceEvaluation.fields.last_valid_price = itemDetail.price;
+      }
+
       // --- Producto ---
       const identity = extractIdentityFields(itemDetail);
       let producto = await Producto.findOneAndUpdate(
