@@ -679,12 +679,28 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
         }
       : undefined;
     
+    // Si hay descuento ML, el precio rebajado de ML (item.price) debe ser el precio final
+    // Solo si NO hay descuento manual, usar directamente el precio rebajado de ML
+    if (descuentoML && !productoExistente?.descuento?.activo) {
+      // item.price ya viene rebajado de ML, usar ese precio directamente
+      precioActualizado = item.price;
+    }
+    
     const priceEvaluation = evaluatePriceForUpdate(precioActualizado, productoExistente, {
       source: 'item_notification',
       ml_id: item.id,
       metadata: { topic: 'items', title: item.title },
     });
     precioActualizado = priceEvaluation.price;
+
+    // Si hay descuento ML y NO hay descuento manual, forzar el precio rebajado de ML
+    if (descuentoML && !productoExistente?.descuento?.activo) {
+      // Asegurar que el precio guardado sea el rebajado de ML, no el original
+      priceEvaluation.fields.price = item.price;
+      priceEvaluation.fields.last_valid_price = item.price;
+      precioActualizado = item.price;
+      console.log(`💰 Descuento ML detectado para ${item.id}: Precio original $${item.original_price} → Precio rebajado $${item.price}`);
+    }
 
     // --- Actualizar/Crear Producto ---
     const identity = extractIdentityFields(item);
@@ -3487,12 +3503,38 @@ async function robustSyncProductos() {
       }
 
       const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
-      const priceEvaluation = evaluatePriceForUpdate(itemDetail.price, existingProduct, {
+      
+      // Detectar descuento nativo de MercadoLibre
+      const descuentoML = itemDetail.original_price && itemDetail.original_price !== itemDetail.price
+        ? {
+            original_price: itemDetail.original_price,
+            deal_ids: itemDetail.deal_ids || []
+          }
+        : undefined;
+      
+      // Si hay descuento ML, itemDetail.price ya viene rebajado de ML
+      // Asegurarse de que se use ese precio rebajado
+      let precioParaGuardar = itemDetail.price;
+      if (descuentoML && existingProduct?.descuento?.activo) {
+        // Si hay descuento ML Y descuento manual, calcular descuento manual sobre precio rebajado de ML
+        const porcentajeManual = existingProduct.descuento.porcentaje || 0;
+        precioParaGuardar = Math.round(itemDetail.price * (1 - porcentajeManual / 100) * 100) / 100;
+      }
+      
+      const priceEvaluation = evaluatePriceForUpdate(precioParaGuardar, existingProduct, {
         source: 'robust_sync',
         ml_id: itemDetail.id,
         metadata: { title: itemDetail.title },
       });
-      const effectiveProductPrice = priceEvaluation.price;
+      let effectiveProductPrice = priceEvaluation.price;
+      
+      // Si hay descuento ML, FORZAR que el precio guardado sea el rebajado de ML (itemDetail.price)
+      // Esto es crítico: el precio rebajado de ML debe ser el precio final
+      if (descuentoML && !existingProduct?.descuento?.activo) {
+        effectiveProductPrice = itemDetail.price;
+        priceEvaluation.fields.price = itemDetail.price;
+        priceEvaluation.fields.last_valid_price = itemDetail.price;
+      }
 
       // --- Producto ---
       const identity = extractIdentityFields(itemDetail);
@@ -3502,6 +3544,7 @@ async function robustSyncProductos() {
           ml_id: itemDetail.id,
           title: itemDetail.title,
           ...priceEvaluation.fields,
+          descuento_ml: descuentoML, // ✅ Guardar descuento nativo de ML
           available_quantity: itemDetail.available_quantity,
           status: itemDetail.status,
           permalink: getCorrectPermalink(itemDetail), // URL validada de la publicación
@@ -4303,11 +4346,34 @@ router.get("/sync/force-limited", async (req: Request, res: Response) => {
         }
 
         const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
-        const priceEvaluation = evaluatePriceForUpdate(itemDetail.price, existingProduct, {
+        
+        // Detectar descuento nativo de MercadoLibre
+        const descuentoML = itemDetail.original_price && itemDetail.original_price !== itemDetail.price
+          ? {
+              original_price: itemDetail.original_price,
+              deal_ids: itemDetail.deal_ids || []
+            }
+          : undefined;
+        
+        // Si hay descuento ML, itemDetail.price ya viene rebajado de ML
+        // Asegurarse de que se use ese precio rebajado
+        let precioParaGuardar = itemDetail.price;
+        if (descuentoML && existingProduct?.descuento?.activo) {
+          // Si hay descuento ML Y descuento manual, calcular descuento manual sobre precio rebajado de ML
+          const porcentajeManual = existingProduct.descuento.porcentaje || 0;
+          precioParaGuardar = Math.round(itemDetail.price * (1 - porcentajeManual / 100) * 100) / 100;
+        }
+        
+        const priceEvaluation = evaluatePriceForUpdate(precioParaGuardar, existingProduct, {
           source: 'force_limited',
           ml_id: itemDetail.id,
           metadata: { title: itemDetail.title },
         });
+        
+        // Si hay descuento ML, FORZAR que el precio guardado sea el rebajado de ML (itemDetail.price)
+        if (descuentoML && !existingProduct?.descuento?.activo) {
+          priceEvaluation.fields.price = itemDetail.price;
+        }
 
         // Guardar producto
         await Producto.findOneAndUpdate(
@@ -4316,6 +4382,7 @@ router.get("/sync/force-limited", async (req: Request, res: Response) => {
             ml_id: itemDetail.id,
             title: itemDetail.title,
             ...priceEvaluation.fields,
+            descuento_ml: descuentoML, // ✅ Guardar descuento nativo de ML
             available_quantity: itemDetail.available_quantity,
             status: itemDetail.status,
             images: itemDetail.pictures?.map((picture: any) => ({
@@ -5759,6 +5826,148 @@ router.post("/ml/productos/:ml_id/actualizar", async (req: Request, res: Respons
     res.status(500).json({ 
       error: "Error al actualizar el producto", 
       details: error.message 
+    });
+  }
+});
+
+// =====================
+// 🔧 Sincronizar TODOS los productos con descuento ML desde MercadoLibre
+// Corrige productos que tienen descuento_ml pero el precio no coincide con ML
+// =====================
+router.post("/sync/descuentos-ml", async (req: Request, res: Response) => {
+  try {
+    const token = await getCurrentToken();
+    if (!token) throw new Error("No autenticado");
+
+    console.log("🔄 Iniciando sincronización de productos con descuento ML...");
+
+    // Buscar todos los productos que tienen descuento_ml guardado
+    const productosConDescuentoML = await Producto.find({
+      "descuento_ml.original_price": { $exists: true, $ne: null }
+    }).select("ml_id title price descuento_ml");
+
+    console.log(`📦 Encontrados ${productosConDescuentoML.length} productos con descuento ML`);
+
+    const resultados = [];
+    let actualizados = 0;
+    let sinCambios = 0;
+    let errores = 0;
+
+    // Ejecutar en background para evitar timeout
+    setTimeout(async () => {
+      for (const producto of productosConDescuentoML) {
+        try {
+          console.log(`🔄 Procesando ${producto.ml_id}: ${producto.title}`);
+
+          // Obtener datos actuales de MercadoLibre
+          const { data: item } = await axios.get(
+            `https://api.mercadolibre.com/items/${producto.ml_id}`,
+            { headers: { Authorization: `Bearer ${token.access_token}` } }
+          );
+
+          // Verificar si todavía tiene descuento ML
+          const tieneDescuentoML = item.original_price && item.original_price !== item.price;
+
+          if (tieneDescuentoML) {
+            // item.price es el precio REBAJADO de ML
+            const precioRebajadoML = item.price;
+            const precioOriginalML = item.original_price;
+
+            // Verificar si el precio en BD no coincide con el precio rebajado de ML
+            const precioActualBD = producto.price;
+            const precioOriginalBD = producto.descuento_ml?.original_price;
+
+            // Si el precio en BD es igual al original, necesita actualizarse al rebajado
+            // O si el precio rebajado de ML es diferente al precio en BD (y no hay descuento manual)
+            const necesitaActualizacion = 
+              (Math.abs(precioActualBD - precioOriginalBD) < 0.01) || // Precio BD = precio original
+              (producto.descuento?.activo === false && Math.abs(precioActualBD - precioRebajadoML) > 0.01); // Precio BD ≠ precio rebajado ML
+
+            if (necesitaActualizacion) {
+              console.log(`  ⚠️ Precio incorrecto detectado:`);
+              console.log(`     Precio en BD: $${precioActualBD}`);
+              console.log(`     Precio original ML: $${precioOriginalML}`);
+              console.log(`     Precio rebajado ML: $${precioRebajadoML}`);
+
+              // Actualizar el producto con el precio rebajado de ML
+              await Producto.updateOne(
+                { ml_id: producto.ml_id },
+                {
+                  $set: {
+                    price: precioRebajadoML,
+                    "descuento_ml.original_price": precioOriginalML,
+                    "descuento_ml.deal_ids": item.deal_ids || []
+                  }
+                }
+              );
+
+              console.log(`  ✅ Actualizado: Precio rebajado $${precioRebajadoML} guardado`);
+              actualizados++;
+              resultados.push({
+                ml_id: producto.ml_id,
+                title: producto.title,
+                actualizado: true,
+                precio_anterior: precioActualBD,
+                precio_nuevo: precioRebajadoML,
+                precio_original: precioOriginalML
+              });
+            } else {
+              sinCambios++;
+              resultados.push({
+                ml_id: producto.ml_id,
+                title: producto.title,
+                actualizado: false,
+                mensaje: "Precio ya estaba correcto"
+              });
+            }
+          } else {
+            // Ya no tiene descuento ML, limpiar el campo
+            await Producto.updateOne(
+              { ml_id: producto.ml_id },
+              { $unset: { descuento_ml: "" } }
+            );
+            console.log(`  ℹ️ Descuento ML removido para ${producto.ml_id}`);
+            resultados.push({
+              ml_id: producto.ml_id,
+              title: producto.title,
+              actualizado: false,
+              mensaje: "Ya no tiene descuento ML"
+            });
+          }
+
+          // Pequeña pausa para no sobrecargar la API de ML
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+        } catch (error: any) {
+          errores++;
+          console.error(`  ❌ Error procesando ${producto.ml_id}:`, error.message);
+          resultados.push({
+            ml_id: producto.ml_id,
+            title: producto.title,
+            actualizado: false,
+            error: error.message
+          });
+        }
+      }
+
+      console.log("\n✅ Sincronización de descuentos ML completada:");
+      console.log(`   ✅ Productos actualizados: ${actualizados}`);
+      console.log(`   ✓ Sin cambios: ${sinCambios}`);
+      console.log(`   ❌ Errores: ${errores}`);
+    }, 100);
+
+    res.json({
+      mensaje: "Sincronización de descuentos ML iniciada en background",
+      total_productos: productosConDescuentoML.length,
+      status: "running",
+      nota: "Revisa los logs del servidor para ver el progreso. Los productos se están actualizando en segundo plano."
+    });
+
+  } catch (error: any) {
+    console.error("❌ Error iniciando sincronización de descuentos ML:", error);
+    res.status(500).json({
+      error: "Error al iniciar sincronización de descuentos ML",
+      details: error.message
     });
   }
 });

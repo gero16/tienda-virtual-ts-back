@@ -107,7 +107,7 @@ router.get('/optimize', async (req: Request, res: Response) => {
         fit: 'inside'
       })
       .webp({
-        quality: 85,
+        quality: 70, // Mayor compresión para reducir tamaño (70 es un buen balance)
         effort: 4 // Balance entre calidad y velocidad
       })
       .toBuffer();
