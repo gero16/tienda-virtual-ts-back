@@ -1206,6 +1206,25 @@ async function forceUpdateProductos() {
       if (itemDetail.original_price && itemDetail.original_price > itemDetail.price) {
         priceEvaluation.fields.price = itemDetail.price;
         priceEvaluation.fields.last_valid_price = itemDetail.price;
+        // LOG ESPECIAL PARA AUDITORÍA AUTOMÁTICA
+        if (itemDetail.id === 'MLU693479060') {
+          console.log('[SYNC] Grabando PRECIO REBAJADO de ML', {
+            ml_id: itemDetail.id,
+            precio_ml: itemDetail.price,
+            original_ml: itemDetail.original_price,
+            precio_grabado: priceEvaluation.fields.price,
+            last_valid_price: priceEvaluation.fields.last_valid_price,
+          });
+        }
+      }
+      // REFUERZO: aunque el precio en la base sea igual, se fuerza el update.
+      if (itemDetail.id === 'MLU693479060') {
+        console.log('[SYNC] Post-evaluación (antes de grabar)', {
+          ml_id: itemDetail.id,
+          precio_ml: itemDetail.price,
+          original_ml: itemDetail.original_price,
+          fields: priceEvaluation.fields,
+        });
       }
 
       // --- Producto ---
@@ -3529,10 +3548,29 @@ async function robustSyncProductos() {
       });
       let effectiveProductPrice = priceEvaluation.price;
       
-      // Si hay descuento ML, siempre forzar el precio guardado al precio rebajado de ML:
-      if (descuentoML) {
+      // FORZAR el precio SIEMPRE al rebajado de ML si existe descuento ML
+      if (itemDetail.original_price && itemDetail.original_price > itemDetail.price) {
         priceEvaluation.fields.price = itemDetail.price;
         priceEvaluation.fields.last_valid_price = itemDetail.price;
+        // LOG ESPECIAL PARA AUDITORÍA AUTOMÁTICA
+        if (itemDetail.id === 'MLU693479060') {
+          console.log('[SYNC] Grabando PRECIO REBAJADO de ML', {
+            ml_id: itemDetail.id,
+            precio_ml: itemDetail.price,
+            original_ml: itemDetail.original_price,
+            precio_grabado: priceEvaluation.fields.price,
+            last_valid_price: priceEvaluation.fields.last_valid_price,
+          });
+        }
+      }
+      // REFUERZO: aunque el precio en la base sea igual, se fuerza el update.
+      if (itemDetail.id === 'MLU693479060') {
+        console.log('[SYNC] Post-evaluación (antes de grabar)', {
+          ml_id: itemDetail.id,
+          precio_ml: itemDetail.price,
+          original_ml: itemDetail.original_price,
+          fields: priceEvaluation.fields,
+        });
       }
 
       // --- Producto ---
@@ -4368,10 +4406,29 @@ router.get("/sync/force-limited", async (req: Request, res: Response) => {
           metadata: { title: itemDetail.title },
         });
         
-        // Si hay descuento ML, siempre forzar el precio guardado al precio rebajado de ML:
-        if (descuentoML) {
+        // FORZAR el precio SIEMPRE al rebajado de ML si existe descuento ML
+        if (itemDetail.original_price && itemDetail.original_price > itemDetail.price) {
           priceEvaluation.fields.price = itemDetail.price;
           priceEvaluation.fields.last_valid_price = itemDetail.price;
+          // LOG ESPECIAL PARA AUDITORÍA AUTOMÁTICA
+          if (itemDetail.id === 'MLU693479060') {
+            console.log('[SYNC] Grabando PRECIO REBAJADO de ML', {
+              ml_id: itemDetail.id,
+              precio_ml: itemDetail.price,
+              original_ml: itemDetail.original_price,
+              precio_grabado: priceEvaluation.fields.price,
+              last_valid_price: priceEvaluation.fields.last_valid_price,
+            });
+          }
+        }
+        // REFUERZO: aunque el precio en la base sea igual, se fuerza el update.
+        if (itemDetail.id === 'MLU693479060') {
+          console.log('[SYNC] Post-evaluación (antes de grabar)', {
+            ml_id: itemDetail.id,
+            precio_ml: itemDetail.price,
+            original_ml: itemDetail.original_price,
+            fields: priceEvaluation.fields,
+          });
         }
 
         // Guardar producto
