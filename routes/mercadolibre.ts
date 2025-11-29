@@ -631,8 +631,6 @@ function calculateDeliveryTimes(productType: string, mlHandlingTime: number | un
     };
   }
 }
-
-
 async function handleItemNotification(resourceUrl: string, accessToken: string) {
   try {
   const fullUrl = `https://api.mercadolibre.com${resourceUrl}`;
@@ -1365,7 +1363,6 @@ async function forceUpdateProductos() {
   console.log(`📊 Total de productos encontrados en ML: ${allItems.length}`);
   console.log(`📊 Total de productos en base de datos: ${await Producto.countDocuments()}`);
 }
-
 // 🚀 Endpoint OPTIMIZADO con paginación para carga rápida
 // (ANTIGUO) Duplicado: consolidar en el de más abajo
 router.get("/admin/productos", authenticate, authorize("admin"), async (req: Request, res: Response) => {
@@ -2154,7 +2151,6 @@ router.get("/categories/distinct", async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Error al obtener categorías: ' + err.message });
   }
 });
-
 // Endpoint para productos con descuento
 router.get("/productos/discounted", async (req: Request, res: Response) => {
   try {
@@ -2948,7 +2944,6 @@ router.get("/sync/force-extended", async (req: Request, res: Response) => {
     });
   }
 });
-
 // 🆕 Diagnóstico del gap: compara IDs vistos en ML vs DB y clasifica faltantes
 router.get("/sync/diagnose-gap", async (req: Request, res: Response) => {
   try {
@@ -3528,10 +3523,8 @@ async function robustSyncProductos() {
       });
       let effectiveProductPrice = priceEvaluation.price;
       
-      // Si hay descuento ML, FORZAR que el precio guardado sea el rebajado de ML (itemDetail.price)
-      // Esto es crítico: el precio rebajado de ML debe ser el precio final
-      if (descuentoML && !existingProduct?.descuento?.activo) {
-        effectiveProductPrice = itemDetail.price;
+      // Si hay descuento ML, siempre forzar el precio guardado al precio rebajado de ML:
+      if (descuentoML) {
         priceEvaluation.fields.price = itemDetail.price;
         priceEvaluation.fields.last_valid_price = itemDetail.price;
       }
@@ -3707,7 +3700,6 @@ async function robustSyncProductos() {
     processingErrors
   };
 }
-
 // Función auxiliar robusta para paginación con reintentos automáticos
 async function paginateWithLimitRobust(token: any, limit: number, maxPages: number) {
   let allItems: string[] = [];
@@ -4370,9 +4362,10 @@ router.get("/sync/force-limited", async (req: Request, res: Response) => {
           metadata: { title: itemDetail.title },
         });
         
-        // Si hay descuento ML, FORZAR que el precio guardado sea el rebajado de ML (itemDetail.price)
-        if (descuentoML && !existingProduct?.descuento?.activo) {
+        // Si hay descuento ML, siempre forzar el precio guardado al precio rebajado de ML:
+        if (descuentoML) {
           priceEvaluation.fields.price = itemDetail.price;
+          priceEvaluation.fields.last_valid_price = itemDetail.price;
         }
 
         // Guardar producto
@@ -4480,7 +4473,6 @@ router.get("/sync/status", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Error obteniendo estado: " + err.message });
   }
 });
-
 // Endpoint para obtener todas las categorías únicas de los productos
 router.get("/categorias", async (req: Request, res: Response) => {
   try {
@@ -5274,8 +5266,6 @@ router.get("/productos/tipo/dropshipping", async (req: Request, res: Response) =
     res.status(500).send("❌ Error al obtener productos dropshipping: " + err.message);
   }
 });
-
-
 // Endpoint manual para limpiar productos eliminados
 router.post("/sync/cleanup", async (req: Request, res: Response) => {
   try {
@@ -6028,7 +6018,6 @@ router.post("/fix-empty-permalinks", async (req: Request, res: Response) => {
     });
   }
 });
-
 // -------------------- VALIDAR CONCORDANCIA DB vs ML --------------------
 router.get("/validar-concordancia", async (req: Request, res: Response) => {
   try {
