@@ -146,8 +146,7 @@ Disallow: /payment-failure
 Disallow: /payment-pending
 Disallow: /checkout
 
-# Sitemap
-Sitemap: ${apiUrl}/api/sitemap.xml
+# Sitemap (usar el del frontend para que Google lo acepte)
 Sitemap: ${baseUrl}/sitemap.xml
 
 # Rastreadores específicos
