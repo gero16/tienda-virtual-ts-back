@@ -1211,6 +1211,23 @@ async function forceUpdateProductos() {
         });
       }
 
+      /*
+       * ⚠️ NOTA IMPORTANTE SOBRE LA API DE MERCADO LIBRE ⚠️
+       * La API pública REST de Mercado Libre NO siempre expone el precio rebajado/promocional en el campo 'original_price',
+       * aunque la web muestre descuentos, ofertas o deals. Esto sucede sobre todo para cuentas estándar o países donde la API
+       * está limitada. Más info: https://developers.mercadolibre.com.ar/es_ar/items-y-busqueda-de-ofertas
+       *
+       * Si en los logs ves:
+       *   [DEBUG][ML_API] id=MLUxxxxxx price=XXX original=null ...
+       * es porque la API no da el precio oferta, sólo el base.
+       *
+       * Si 'original_price' comienza a venir distinto de null, el sistema automáticamente tomará ese precio como rebajado.
+       * Puedes monitorear los 'null' para saber si la API cambia en el futuro.
+       */
+      if(itemDetail.original_price === null) {
+        console.log(`[ALERTA ML] Producto id=${itemDetail.id} no expone original_price, solo price base (${itemDetail.price})`);
+      }
+
       // FORZAR el precio SIEMPRE al rebajado de ML si existe descuento ML
       if (itemDetail.original_price && itemDetail.original_price > itemDetail.price) {
         priceEvaluation.fields.price = itemDetail.price;
