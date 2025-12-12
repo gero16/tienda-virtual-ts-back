@@ -6541,4 +6541,46 @@ router.get("/productos", async (req: Request, res: Response) => {
   }
 });
 
+// Sincronización individual de producto ML por ml_id
+router.post("/sync-ml-product", async (req, res) => {
+  const { publication_id } = req.body;
+  if (!publication_id) {
+    return res.status(400).json({ error: "Falta publication_id" });
+  }
+  try {
+    // Usar el token más reciente
+    const tokenDoc = await Token.findOne().sort({ createdAt: -1 });
+    if (!tokenDoc || !tokenDoc.access_token) {
+      return res.status(500).json({ error: "No hay token de ML configurado" });
+    }
+    const accessToken = tokenDoc.access_token;
+    // Obtener datos del producto desde la API oficial de Mercado Libre
+    const mlResp = await axios.get(`https://api.mercadolibre.com/items/${publication_id}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const mlProducto = mlResp.data;
+
+    // Guardar/actualizar producto en la base local
+    let producto = await Producto.findOneAndUpdate(
+      { ml_id: mlProducto.id },
+      {
+        ml_id: mlProducto.id,
+        title: mlProducto.title,
+        available_quantity: mlProducto.available_quantity,
+        price: mlProducto.price,
+        status: mlProducto.status,
+        permalink: mlProducto.permalink,
+        images: mlProducto.pictures?.map((picture) => ({
+          id: picture.id,
+          url: picture.secure_url || picture.url,
+        })) || [],
+      },
+      { upsert: true, new: true }
+    );
+    return res.json({ message: "Producto sincronizado correctamente", data: producto });
+  } catch (error) {
+    return res.status(500).json({ error: "Error sincronizando producto ML", detalles: error.message });
+  }
+});
+
 export default router;
