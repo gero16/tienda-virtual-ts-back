@@ -6570,7 +6570,7 @@ router.post("/sync-ml-product", async (req, res) => {
         price: mlProducto.price,
         status: mlProducto.status,
         permalink: mlProducto.permalink,
-        images: mlProducto.pictures?.map((picture: { id: string; secure_url?: string; url: string }) => ({
+        images: mlProducto.pictures?.map((picture: any) => ({
           id: picture.id,
           url: picture.secure_url || picture.url,
         })) || [],
@@ -6578,8 +6578,12 @@ router.post("/sync-ml-product", async (req, res) => {
       { upsert: true, new: true }
     );
     return res.json({ message: "Producto sincronizado correctamente", data: producto });
-  } catch (error: any) {
-    return res.status(500).json({ error: "Error sincronizando producto ML", detalles: error.message || String(error) });
+  } catch (error) {
+    if (error instanceof Error) {
+      return res.status(500).json({ error: "Error sincronizando producto ML", detalles: error.message });
+    } else {
+      return res.status(500).json({ error: "Error sincronizando producto ML", detalles: String(error) });
+    }
   }
 });
 
