@@ -6570,7 +6570,7 @@ router.post("/sync-ml-product", async (req, res) => {
         price: mlProducto.price,
         status: mlProducto.status,
         permalink: mlProducto.permalink,
-        images: mlProducto.pictures?.map((picture: any) => ({
+        images: mlProducto.pictures?.map((picture: { id: string; secure_url?: string; url?: string }) => ({
           id: picture.id,
           url: picture.secure_url || picture.url,
         })) || [],
