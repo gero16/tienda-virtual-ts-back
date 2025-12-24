@@ -23,8 +23,23 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     const body: any = req.body || {};
     const query: any = (req as any).query || {};
 
-    // Compatibilidad con diferentes formatos de MP (type/topic en body o query)
-    const rawType = body.type || query.type || body.topic || query.topic || body.action;
+    // Compatibilidad con diferentes formatos de MP:
+    // - IPN clásico: ?topic=payment&id=123 / ?topic=merchant_order&id=456
+    // - Webhooks: { type: 'payment', action: 'payment.updated', data: { id } }
+    const topic = String(body.type || query.type || body.topic || query.topic || '').toLowerCase();
+    const action = String(body.action || '').toLowerCase();
+    const rawType = topic || action || 'unknown';
+
+    // Determinar el tipo real de notificación (NO usar action como "type" estricto)
+    const isPaymentNotification =
+      topic === 'payment' ||
+      topic.includes('payment') ||
+      action.startsWith('payment.');
+    const isMerchantOrderNotification =
+      topic === 'merchant_order' ||
+      topic.includes('merchant_order') ||
+      action.startsWith('merchant_order.');
+
     const rawData = body.data || {};
     let paymentId: string | undefined = rawData.id || body.id || query.id;
 
@@ -45,19 +60,64 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       console.log(colors.yellow(`   query: ${JSON.stringify(query)}`));
     }
 
-    // Si viene un type/topic explícito y no es pago, salir
-    if (rawType && rawType !== "payment") {
-      console.log(colors.yellow("   ⚠️  Notificación no es de pago, ignorando"));
+    // Si viene un topic/action que no corresponde a pago u orden de MP, salir
+    if (!isPaymentNotification && !isMerchantOrderNotification) {
+      console.log(colors.yellow("   ⚠️  Notificación no reconocida (no payment/merchant_order), ignorando"));
       return;
+    }
+
+    // Si es merchant_order, primero resolver el payment_id real (MP suele notificar Checkout Pro así)
+    if (isMerchantOrderNotification) {
+      let merchantOrderId: string | undefined = rawData.id || body.id || query.id;
+
+      // A veces viene como resource: https://api.mercadopago.com/merchant_orders/123
+      if (!merchantOrderId && (body.resource || query.resource)) {
+        const resource = String(body.resource || query.resource);
+        const match = resource.match(/merchant_orders\/(\d+)/);
+        if (match && match[1]) merchantOrderId = match[1];
+      }
+
+      if (!merchantOrderId) {
+        console.log(colors.red("   ❌ Notificación merchant_order sin ID"));
+        return;
+      }
+
+      const merchantOrderIdNum = parseInt(String(merchantOrderId), 10);
+      if (Number.isNaN(merchantOrderIdNum)) {
+        console.log(colors.red("   ❌ merchantOrderId no es numérico"));
+        return;
+      }
+
+      console.log(colors.yellow(`   🧾 Consultando merchant_order ${merchantOrderIdNum}...`));
+      try {
+        const merchantOrderResp = await (mercadopago as any).merchant_orders.get(merchantOrderIdNum);
+        const merchantOrderData = merchantOrderResp?.body;
+        const payments: any[] = Array.isArray(merchantOrderData?.payments) ? merchantOrderData.payments : [];
+
+        if (!payments.length) {
+          console.log(colors.yellow("   ⚠️ merchant_order sin payments aún, esperando próximo webhook"));
+          return;
+        }
+
+        // Priorizar pagos aprobados; si no hay, tomar el último disponible
+        const approvedPayment = payments.find(p => String(p?.status || '').toLowerCase() === 'approved');
+        const selected = approvedPayment || payments[payments.length - 1];
+
+        if (!selected?.id) {
+          console.log(colors.red("   ❌ No se pudo obtener payment_id desde merchant_order"));
+          return;
+        }
+
+        paymentId = String(selected.id);
+        console.log(colors.cyan(`   🔗 merchant_order → payment_id resuelto: ${paymentId} (status=${selected.status || 'N/A'})`));
+      } catch (moErr: any) {
+        console.log(colors.red("   ❌ Error consultando merchant_order en MP:"), moErr?.message || moErr);
+        return;
+      }
     }
 
     if (!paymentId) {
       console.log(colors.red("   ❌ No se pudo determinar el payment ID"));
-      return;
-    }
-
-    if (!paymentId) {
-      console.log(colors.red("   ❌ No se recibió payment ID"));
       return;
     }
 
