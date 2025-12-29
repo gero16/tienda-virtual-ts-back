@@ -14,14 +14,21 @@ const router = Router();
 /**
  * Webhook para recibir notificaciones de MercadoPago
  * Se llama cuando hay cambios en el estado de un pago
+ *
+ * Nota: MercadoPago puede notificar por POST (webhooks) o por GET (IPN clásico)
  */
-router.post("/mercadopago", async (req: Request, res: Response) => {
+router.all("/mercadopago", async (req: Request, res: Response) => {
   try {
     // Responder inmediatamente a MercadoPago (requisito de la API)
     res.status(200).send("OK");
 
     const body: any = req.body || {};
     const query: any = (req as any).query || {};
+    const queryDataId =
+      query?.["data.id"] ||
+      query?.["data[id]"] ||
+      query?.["data%5Bid%5D"] ||
+      query?.["data_id"];
 
     // Compatibilidad con diferentes formatos de MP:
     // - IPN clásico: ?topic=payment&id=123 / ?topic=merchant_order&id=456
@@ -41,7 +48,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       action.startsWith('merchant_order.');
 
     const rawData = body.data || {};
-    let paymentId: string | undefined = rawData.id || body.id || query.id;
+    let paymentId: string | undefined = rawData.id || body.id || query.id || queryDataId;
 
     // A veces viene como 'resource': 'https://api.mercadopago.com/v1/payments/1234567890'
     if (!paymentId && (body.resource || query.resource)) {
@@ -51,6 +58,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     }
 
     console.log(colors.blue("\n🔔 Webhook de MercadoPago recibido"));
+    console.log(colors.blue(`   Método: ${String((req as any).method || '').toUpperCase()}`));
     console.log(colors.blue(`   Type/Topic: ${rawType}`));
     console.log(colors.blue(`   PaymentId: ${paymentId}`));
     // Log limitado del cuerpo para diagnóstico
@@ -159,6 +167,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     // Si no existe, buscar por external_reference
     // Esto es importante para actualizar órdenes creadas al generar la preferencia
     if (!ordenExistente && paymentData.external_reference) {
+      // 1) Priorizar la orden "pendiente" creada al generar preferencia
       ordenExistente = await Orden.findOne({
         external_reference: paymentData.external_reference,
         // Solo buscar órdenes que sean de "preferencia creada" o que no tengan payment_id real
@@ -167,10 +176,17 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
           { payment_id: { $in: ['N/A', null, ''] } },
           { payment_id: { $regex: /^pref-/i } } // IDs de preferencia suelen empezar con "pref-"
         ]
-      });
+      }).sort({ date_created: -1 });
+
+      // 2) Fallback: cualquier orden con ese external_reference (por si el detalle cambió)
+      if (!ordenExistente) {
+        ordenExistente = await Orden.findOne({
+          external_reference: paymentData.external_reference
+        }).sort({ date_created: -1 });
+      }
       
       if (ordenExistente) {
-        console.log(colors.cyan(`   🔄 Encontrada orden de preferencia creada (${ordenExistente.orden_id}), se actualizará con el pago real`));
+        console.log(colors.cyan(`   🔄 Encontrada orden por external_reference (${ordenExistente.orden_id}), se actualizará con el pago real`));
       }
     }
 
