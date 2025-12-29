@@ -11,6 +11,13 @@ import { ClienteService } from "../services/clienteService";
 
 const router = Router();
 
+// Formateo seguro de montos (evita 704.8800000000001, etc.)
+const formatMoney = (value: any) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0.00";
+  return (Math.round((n + Number.EPSILON) * 100) / 100).toFixed(2);
+};
+
 /**
  * Webhook para recibir notificaciones de MercadoPago
  * Se llama cuando hay cambios en el estado de un pago
@@ -142,7 +149,7 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
     const paymentData = payment.body;
 
     console.log(colors.cyan(`   💳 Estado del pago: ${paymentData.status}`));
-    console.log(colors.cyan(`   💵 Monto: $${paymentData.transaction_amount} ${paymentData.currency_id}`));
+    console.log(colors.cyan(`   💵 Monto: $${formatMoney(paymentData.transaction_amount)} ${paymentData.currency_id}`));
     console.log(colors.cyan(`   🆔 External Reference: ${paymentData.external_reference}`));
     console.log(colors.cyan(`   🧪 Live Mode: ${paymentData.live_mode}`));
 
@@ -605,63 +612,16 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
         console.log(colors.yellow(`      Email recibido: ${baseOrden.customer.email || 'undefined'}`));
       }
 
-      // Notificación admin con mensaje claro (evitar duplicados)
+      // Notificación admin:
+      // Crear una notificación NUEVA cuando cambie el estado (para ver tiempos)
       try {
-        // Verificar si ya existe una notificación para este payment_id con este estado
-        const existingNotification = await AdminNotification.findOne({
-          payment_id: paymentId?.toString?.(),
-          message: { $exists: true }
-        });
+        const status = String(paymentData.status || '').toLowerCase()
 
-        // Solo crear notificación si no existe o si el estado cambió significativamente
-        const shouldCreateNotification = !existingNotification || 
-          (existingNotification.message && 
-           !existingNotification.message.includes(paymentData.status));
+        // Solo notificar si hubo cambio de estado (MP puede reintentar el mismo webhook varias veces)
+        const prevStatus = String(ordenExistente?.payment_status || '').toLowerCase();
+        const shouldCreateNotification = !ordenExistente || prevStatus !== status;
 
         if (shouldCreateNotification) {
-          const status = String(paymentData.status || '').toLowerCase()
-          
-          // Si el pago fue aprobado, eliminar notificaciones anteriores de "Orden iniciada" para evitar duplicados
-          if (status === 'approved' && paymentId) {
-            try {
-              // Buscar y eliminar notificaciones "Orden iniciada" que puedan estar asociadas
-              // por payment_id, order_id, o por el email del cliente (en caso de que no coincidan los IDs)
-              const customerEmail = paymentData.payer?.email || metadata.customer_email;
-              const deleteConditions: any[] = [
-                { payment_id: paymentId?.toString?.() },
-                { order_id: finalOrderId }
-              ];
-              
-              // Si hay external_reference, también buscar por él
-              if (paymentData.external_reference) {
-                // Buscar órdenes con este external_reference y obtener sus order_id
-                const ordenesConExternalRef = await Orden.find({ 
-                  external_reference: paymentData.external_reference 
-                }).select('orden_id').lean();
-                if (ordenesConExternalRef.length > 0) {
-                  deleteConditions.push({
-                    order_id: { $in: ordenesConExternalRef.map(o => o.orden_id) }
-                  });
-                }
-              }
-              
-              // Si hay email del cliente, también buscar por él (para casos donde los IDs no coincidan)
-              if (customerEmail) {
-                deleteConditions.push({
-                  customer_email: customerEmail,
-                  message: { $regex: /Orden iniciada/i }
-                });
-              }
-              
-              await AdminNotification.deleteMany({
-                $or: deleteConditions,
-                message: { $regex: /Orden iniciada/i }
-              });
-              console.log(colors.cyan(`   🗑️ Notificaciones "Orden iniciada" eliminadas para payment_id ${paymentId}`));
-            } catch (delErr) {
-              console.log(colors.yellow(`   ⚠️ No se pudieron eliminar notificaciones anteriores: ${delErr}`));
-            }
-          }
           
           const statusMap: Record<string,string> = {
             approved: 'Pago aprobado',
@@ -679,6 +639,7 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
           const friendly = statusMap[status] || `Pago ${status}`
           const method = paymentData.payment_method_id ? String(paymentData.payment_method_id).toUpperCase() : (paymentData.payment_type_id || '')
           const amount = Number(paymentData.transaction_amount || 0)
+          const amountFmt = formatMoney(amount)
           const curr = paymentData.currency_id || ''
           const detail = String(paymentData.status_detail || '')
           const detailMap: Record<string,string> = {
@@ -716,12 +677,12 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
           const friendlyDetail = detailMap[detail] || detail
           
           // Construir mensaje base
-          let message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}`
+          let message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}`
           
           // Manejar estados especiales con información adicional
           if (status === 'in_process') {
             console.log(colors.cyan(`   🔄 PAGO EN PROCESO - Mercado Pago está analizando el pago`));
-            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | 🔄 Análisis en curso - Esperar confirmación`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''} | 🔄 Análisis en curso - Esperar confirmación`;
           }
           
           if (status === 'in_mediation') {
@@ -730,7 +691,7 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
             
             // Agregar información útil al mensaje de la notificación
             const payerEmail = paymentData.payer?.email || metadata.customer_email || 'Cliente';
-            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | ⚠️ Disputa iniciada - Revisar en panel MP`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''} | ⚠️ Disputa iniciada - Revisar en panel MP`;
             
             // Si hay información adicional sobre la disputa, agregarla
             if (paymentData.dispute) {
@@ -743,24 +704,24 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
           
           if (status === 'charged_back') {
             console.log(colors.red(`   ❌ CHARGEBACK - El banco revirtió el pago`));
-            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | ❌ Pago revertido por banco`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''} | ❌ Pago revertido por banco`;
           }
           
           if (status === 'refunded') {
             const refundAmount = paymentData.transaction_amount || amount;
             console.log(colors.green(`   ✅ REEMBOLSO COMPLETADO - ${curr} ${refundAmount}`));
-            message = `${friendly} - ${curr} ${refundAmount}${method ? ` - método ${method}` : ''} | ✅ Reembolso completado`;
+            message = `${friendly} - ${curr} ${formatMoney(refundAmount)}${method ? ` - método ${method}` : ''} | ✅ Reembolso completado`;
           }
           
           if (status === 'partially_refunded') {
             const refundAmount = paymentData.transaction_amount || amount;
             console.log(colors.yellow(`   ⚠️ REEMBOLSO PARCIAL - ${curr} ${refundAmount}`));
-            message = `${friendly} - ${curr} ${refundAmount}${method ? ` - método ${method}` : ''} | ⚠️ Reembolso parcial realizado`;
+            message = `${friendly} - ${curr} ${formatMoney(refundAmount)}${method ? ` - método ${method}` : ''} | ⚠️ Reembolso parcial realizado`;
           }
           
           if (status === 'authorized') {
             console.log(colors.cyan(`   🔐 PAGO AUTORIZADO - Requiere captura posterior`));
-            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''} | 🔐 Autorizado - Requiere captura`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''} | 🔐 Autorizado - Requiere captura`;
           }
           
           if (status === 'pending') {
@@ -779,7 +740,7 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
               ? ` - ${paymentData.installments} cuotas` 
               : '';
             
-            message = `${friendly} - ${curr} ${amount}${method ? ` - método ${method}` : ''}${installmentsInfo} | ⏳ ${pendingType}`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${installmentsInfo} | ⏳ ${pendingType}`;
           }
 
           await AdminNotification.create({
@@ -794,7 +755,7 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
           });
           console.log(colors.green(`   📬 Notificación creada: ${message}`));
         } else {
-          console.log(colors.yellow(`   ⏭️  Notificación ya existe para payment_id ${paymentId}, omitiendo`));
+          console.log(colors.yellow(`   ⏭️  Estado repetido (${status}), no se crea notificación nueva`));
         }
       } catch (nErr) {
         console.log(colors.yellow('⚠️ No se pudo crear notificación admin (webhook)'), nErr);
