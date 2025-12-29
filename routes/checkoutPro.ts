@@ -458,10 +458,12 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       // Notificación admin - Marcar claramente que es solo una preferencia creada
       try {
         const cuponInfo = cuponValidado ? ` (con cupón ${cuponValidado.codigo})` : '';
+        // Formateo de monto a 2 decimales para el mensaje:
+        const montoFmt = (Math.round((totalFinal + Number.EPSILON) * 100) / 100).toFixed(2);
         await AdminNotification.create({
           type: 'order',
           status: 'unread',
-          message: `[PREFERENCIA CREADA] Cliente redirigido a Mercado Pago - ${targetCurrency} ${totalFinal}${cuponInfo} | ⏳ Esperando pago real`,
+          message: `[PREFERENCIA CREADA] Cliente redirigido a Mercado Pago - ${targetCurrency} ${montoFmt}${cuponInfo} | ⏳ Esperando pago real`,
           order_id: ordenPending.orden_id,
           payment_id: response.body.id?.toString?.(),
           customer_email: customerData?.email || undefined,
