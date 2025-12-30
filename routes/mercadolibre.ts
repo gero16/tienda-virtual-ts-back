@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { authenticate, authorize, authorizeDestacados } from "../middleware/auth";
 import axios from "axios";
+import { logger } from "../utils/logger";
 import Token from "../models/Token";
 import Notificacion from "../models/Notificacion";
 import Producto from "../models/Producto";
@@ -648,7 +649,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
     });
     description = descResponse.data.plain_text || "";
   } catch (error) {
-    console.log("⚠️ No se pudo obtener la descripción para:", item.id);
+    logger.debug("⚠️ No se pudo obtener la descripción", { itemId: item.id });
   }
 
     // 🔍 Verificar si el producto existe y tiene descuento activo
@@ -1191,7 +1192,7 @@ async function forceUpdateProductos() {
         );
         description = descResponse.data.plain_text || "";
       } catch (error) {
-        console.log("⚠️ No se pudo obtener la descripción para:", itemId);
+        logger.debug("⚠️ No se pudo obtener la descripción", { itemId });
       }
 
       const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
@@ -2913,14 +2914,14 @@ router.get("/sync/force-sync", async (req: Request, res: Response) => {
 // Endpoint para sincronización avanzada (ejecuta en background)
 router.get("/sync/force-advanced", async (req: Request, res: Response) => {
   try {
-    console.log("🚀 Iniciando sincronización avanzada en background...");
+    logger.info("🚀 Iniciando sincronización avanzada en background...");
     
     // Ejecutar en background para evitar timeout
     advancedSyncProductos().then(async (result) => {
-      console.log("✅ Sincronización avanzada completada en background");
-      console.log(`📊 Productos encontrados: ${result.totalItems}`);
+      logger.info("✅ Sincronización avanzada completada en background");
+      logger.info(`📊 Productos encontrados: ${result.totalItems}`);
     }).catch((error) => {
-      console.error("❌ Error en sincronización avanzada:", error);
+      logger.error("❌ Error en sincronización avanzada", { error: error?.message || error });
     });
     
     res.json({
@@ -2929,7 +2930,7 @@ router.get("/sync/force-advanced", async (req: Request, res: Response) => {
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    console.error("❌ Error iniciando sincronización avanzada:", err);
+    logger.error("❌ Error iniciando sincronización avanzada", { error: err?.message || err });
     res.status(500).json({ 
       error: "Error iniciando sincronización avanzada: " + err.message,
       timestamp: new Date().toISOString()
@@ -2940,15 +2941,15 @@ router.get("/sync/force-advanced", async (req: Request, res: Response) => {
 // Endpoint para sincronización robusta (nueva función mejorada)
 router.get("/sync/force-robust", async (req: Request, res: Response) => {
   try {
-    console.log("🚀 Iniciando sincronización robusta en background...");
+    logger.info("🚀 Iniciando sincronización robusta en background...");
     
     // Ejecutar en background para evitar timeout
     robustSyncProductos().then(async (result) => {
-      console.log("✅ Sincronización robusta completada en background");
-      console.log(`📊 Productos únicos encontrados: ${result.totalItems}`);
-      console.log(`📊 Estrategias ejecutadas: ${result.strategies.length}`);
+      logger.info("✅ Sincronización robusta completada en background");
+      logger.info(`📊 Productos únicos encontrados: ${result.totalItems}`);
+      logger.info(`📊 Estrategias ejecutadas: ${result.strategies.length}`);
     }).catch((error) => {
-      console.error("❌ Error en sincronización robusta:", error);
+      logger.error("❌ Error en sincronización robusta", { error: error?.message || error });
     });
     
     res.json({
@@ -2963,7 +2964,7 @@ router.get("/sync/force-robust", async (req: Request, res: Response) => {
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    console.error("❌ Error iniciando sincronización robusta:", err);
+    logger.error("❌ Error iniciando sincronización robusta", { error: err?.message || err });
     res.status(500).json({ 
       error: "Error iniciando sincronización robusta: " + err.message,
       timestamp: new Date().toISOString()
@@ -2974,13 +2975,13 @@ router.get("/sync/force-robust", async (req: Request, res: Response) => {
 // 🆕 Endpoint extendido: combina todas las estrategias disponibles
 router.get("/sync/force-extended", async (req: Request, res: Response) => {
   try {
-    console.log("🚀 Iniciando sincronización EXTENDIDA en background...");
+    logger.info("🚀 Iniciando sincronización EXTENDIDA en background...");
     robustSyncExtended().then(async (result) => {
-      console.log("✅ Sincronización EXTENDIDA completada en background");
-      console.log(`📊 Productos únicos encontrados: ${result.totalItems}`);
-      console.log(`📊 Estrategias ejecutadas: ${result.strategies.length}`);
+      logger.info("✅ Sincronización EXTENDIDA completada en background");
+      logger.info(`📊 Productos únicos encontrados: ${result.totalItems}`);
+      logger.info(`📊 Estrategias ejecutadas: ${result.strategies.length}`);
     }).catch((error) => {
-      console.error("❌ Error en sincronización EXTENDIDA:", error);
+      logger.error("❌ Error en sincronización EXTENDIDA", { error: error?.message || error });
     });
     res.json({
       message: "🔄 Sincronización EXTENDIDA iniciada en background. Se ejecutan todas las estrategias para capturar el máximo posible.",
@@ -2988,7 +2989,7 @@ router.get("/sync/force-extended", async (req: Request, res: Response) => {
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    console.error("❌ Error iniciando sincronización EXTENDIDA:", err);
+    logger.error("❌ Error iniciando sincronización EXTENDIDA", { error: err?.message || err });
     res.status(500).json({ 
       error: "Error iniciando sincronización EXTENDIDA: " + err.message,
       timestamp: new Date().toISOString()
@@ -3249,7 +3250,7 @@ async function robustSyncExtended() {
   const token = await getCurrentToken();
   if (!token) throw new Error("No autenticado");
 
-  console.log(`🚀 Iniciando sincronización EXTENDIDA para user_id: ${token.user_id}`);
+  logger.info(`🚀 Iniciando sincronización EXTENDIDA para user_id: ${token.user_id}`);
 
   let allItems: string[] = [];
   const strategies: Array<{ name: string; items: number; processed: number; errors: number }> = [];
@@ -3264,8 +3265,8 @@ async function robustSyncExtended() {
       allItems = allItems.concat(s.items);
       totalProcessed += s.processed; totalErrors += s.errors;
       strategies.push({ name: `Paginate ${cfg.l}`, items: s.items.length, processed: s.processed, errors: s.errors });
-      console.log(`📊 Paginate ${cfg.l}: ${s.items.length} únicos`);
-    } catch (e) { console.error(`❌ Error paginate ${cfg.l}:`, e); }
+      logger.info(`📊 Paginate ${cfg.l}: ${s.items.length} únicos`);
+    } catch (e: any) { logger.error(`❌ Error paginate ${cfg.l}`, { error: e?.message || e }); }
   }
 
   // 2) Por estados (active/paused/closed/under_review)
@@ -3275,7 +3276,7 @@ async function robustSyncExtended() {
     allItems = allItems.concat(s.items);
     totalProcessed += s.processed; totalErrors += s.errors;
     strategies.push({ name: "Status", items: s.items.length, processed: s.processed, errors: s.errors });
-  } catch (e) { console.error("❌ Error status:", e); }
+  } catch (e: any) { logger.error("❌ Error status", { error: e?.message || e }); }
 
   // 3) Estado + fecha (últimos 90 días por día y 3–24 meses por mes)
   try {
@@ -3284,7 +3285,7 @@ async function robustSyncExtended() {
     allItems = allItems.concat(s.items);
     totalProcessed += s.processed; totalErrors += s.errors || 0;
     strategies.push({ name: "Status+Date", items: s.items.length, processed: s.processed, errors: s.errors || 0 });
-  } catch (e) { console.error("❌ Error status+date:", e); }
+  } catch (e: any) { logger.error("❌ Error status+date", { error: e?.message || e }); }
 
   // 4) Activos por rangos de precio
   try {
@@ -3293,7 +3294,7 @@ async function robustSyncExtended() {
     allItems = allItems.concat(s.items);
     totalProcessed += s.processed; totalErrors += s.errors;
     strategies.push({ name: "Active by Price", items: s.items.length, processed: s.processed, errors: s.errors });
-  } catch (e) { console.error("❌ Error price ranges:", e); }
+  } catch (e: any) { logger.error("❌ Error price ranges", { error: e?.message || e }); }
 
   // 5) Por categorías
   try {
@@ -3302,7 +3303,7 @@ async function robustSyncExtended() {
     allItems = allItems.concat(s.items);
     totalProcessed += s.processed; totalErrors += s.errors;
     strategies.push({ name: "Categories", items: s.items.length, processed: s.processed, errors: s.errors });
-  } catch (e) { console.error("❌ Error categories:", e); }
+  } catch (e: any) { logger.error("❌ Error categories", { error: e?.message || e }); }
 
   // 6) Por ordenamiento (price_asc/price_desc)
   try {
@@ -3311,7 +3312,7 @@ async function robustSyncExtended() {
     allItems = allItems.concat(s.items);
     totalProcessed += s.processed; totalErrors += s.errors;
     strategies.push({ name: "Ordering", items: s.items.length, processed: s.processed, errors: s.errors });
-  } catch (e) { console.error("❌ Error ordering:", e); }
+  } catch (e: any) { logger.error("❌ Error ordering", { error: e?.message || e }); }
 
   // 7) Búsqueda pública por seller_id (sin autenticación)
   try {
@@ -3320,12 +3321,12 @@ async function robustSyncExtended() {
     allItems = allItems.concat(s.items);
     totalProcessed += s.processed; totalErrors += s.errors;
     strategies.push({ name: "Public Search", items: s.items.length, processed: s.processed, errors: s.errors });
-  } catch (e) { console.error("❌ Error public search:", e); }
+  } catch (e: any) { logger.error("❌ Error public search", { error: e?.message || e }); }
 
   // Deduplicar y procesar
   const uniqueItems = deduplicateItems(allItems);
   savePartial(uniqueItems, "extended-final-merged");
-  console.log(`🎯 EXTENDED: únicos=${uniqueItems.length}, procesados=${totalProcessed}, errores=${totalErrors}`);
+  logger.info(`🎯 EXTENDED: únicos=${uniqueItems.length}, procesados=${totalProcessed}, errores=${totalErrors}`);
 
   let processedCount = 0;
   let errorCount = 0;
@@ -3418,7 +3419,7 @@ async function robustSyncExtended() {
     }
   }
 
-  console.log(`🎉 EXTENDED COMPLETADO: ok=${processedCount}, errores=${errorCount}, únicos=${uniqueItems.length}`);
+  logger.info(`🎉 EXTENDED COMPLETADO: ok=${processedCount}, errores=${errorCount}, únicos=${uniqueItems.length}`);
   return { totalItems: uniqueItems.length, totalProcessed: processedCount, totalErrors: errorCount, strategies, items: uniqueItems, processingErrors };
 }
 
@@ -3427,7 +3428,7 @@ async function robustSyncProductos() {
   const token = await getCurrentToken();
   if (!token) throw new Error("No autenticado");
 
-  console.log(`🚀 Iniciando sincronización robusta para user_id: ${token.user_id}`);
+  logger.info(`🚀 Iniciando sincronización robusta para user_id: ${token.user_id}`);
   
   let allItems: string[] = [];
   const strategies = [];
@@ -3435,7 +3436,7 @@ async function robustSyncProductos() {
   let totalErrors = 0;
 
   // Estrategia 1: Paginación estándar con límite 50
-  console.log("📋 Estrategia 1: Paginación estándar (límite 50)");
+  logger.info("📋 Estrategia 1: Paginación estándar (límite 50)");
   try {
     const strategy1 = await paginateWithLimitRobust(token, 50, 40);
     savePartial(strategy1.items, "strategy1-paginate50");
@@ -3448,13 +3449,13 @@ async function robustSyncProductos() {
       processed: strategy1.processed, 
       errors: strategy1.errors 
     });
-    console.log(`📊 Estrategia 1: ${strategy1.items.length} productos únicos`);
+    logger.info(`📊 Estrategia 1: ${strategy1.items.length} productos únicos`);
   } catch (error) {
-    console.error("❌ Error en estrategia 1:", error);
+    logger.error("❌ Error en estrategia 1", { error: (error as any)?.message || error });
   }
 
   // Estrategia 2: Paginación con límite 25 (más páginas)
-  console.log("📋 Estrategia 2: Paginación con límite 25");
+  logger.info("📋 Estrategia 2: Paginación con límite 25");
   try {
     const strategy2 = await paginateWithLimitRobust(token, 25, 50);
     savePartial(strategy2.items, "strategy2-paginate25");
@@ -3467,13 +3468,13 @@ async function robustSyncProductos() {
       processed: strategy2.processed, 
       errors: strategy2.errors 
     });
-    console.log(`📊 Estrategia 2: ${strategy2.items.length} productos únicos`);
+    logger.info(`📊 Estrategia 2: ${strategy2.items.length} productos únicos`);
   } catch (error) {
-    console.error("❌ Error en estrategia 2:", error);
+    logger.error("❌ Error en estrategia 2", { error: (error as any)?.message || error });
   }
 
   // Estrategia 3: Sincronización por estados
-  console.log("📋 Estrategia 3: Sincronización por estados");
+  logger.info("📋 Estrategia 3: Sincronización por estados");
   try {
     const strategy3 = await syncByStatusRobust(token);
     savePartial(strategy3.items, "strategy3-status");
@@ -3486,13 +3487,13 @@ async function robustSyncProductos() {
       processed: strategy3.processed, 
       errors: strategy3.errors 
     });
-    console.log(`📊 Estrategia 3: ${strategy3.items.length} productos únicos`);
+    logger.info(`📊 Estrategia 3: ${strategy3.items.length} productos únicos`);
   } catch (error) {
-    console.error("❌ Error en estrategia 3:", error);
+    logger.error("❌ Error en estrategia 3", { error: (error as any)?.message || error });
   }
 
   // Estrategia 4: API de búsqueda PÚBLICA (sin autenticación, sin límite de offset)
-  console.log("📋 Estrategia 4: Búsqueda pública por seller_id");
+  logger.info("📋 Estrategia 4: Búsqueda pública por seller_id");
   try {
     const strategy4 = await syncViaPublicSearch(token);
     savePartial(strategy4.items, "strategy4-public-search");
@@ -3505,23 +3506,23 @@ async function robustSyncProductos() {
       processed: strategy4.processed, 
       errors: strategy4.errors 
     });
-    console.log(`📊 Estrategia 4: ${strategy4.items.length} productos únicos`);
+    logger.info(`📊 Estrategia 4: ${strategy4.items.length} productos únicos`);
   } catch (error) {
-    console.error("❌ Error en estrategia 4:", error);
+    logger.error("❌ Error en estrategia 4", { error: (error as any)?.message || error });
   }
 
   // Deduplicar TODOS los productos de todas las estrategias
   const uniqueItems = deduplicateItems(allItems);
   savePartial(uniqueItems, "final-merged");
 
-  console.log(`🎉 DETECCIÓN ROBUSTA COMPLETADA:`);
-  console.log(`📊 Total de productos únicos encontrados: ${uniqueItems.length}`);
-  console.log(`📊 Total procesados (con duplicados): ${totalProcessed}`);
-  console.log(`📊 Total errores: ${totalErrors}`);
-  console.log(`📊 Estrategias ejecutadas: ${strategies.length}`);
+  logger.info("🎉 DETECCIÓN ROBUSTA COMPLETADA");
+  logger.info(`📊 Total de productos únicos encontrados: ${uniqueItems.length}`);
+  logger.info(`📊 Total procesados (con duplicados): ${totalProcessed}`);
+  logger.info(`📊 Total errores: ${totalErrors}`);
+  logger.info(`📊 Estrategias ejecutadas: ${strategies.length}`);
 
   // 🚀 PROCESAR TODOS LOS PRODUCTOS ENCONTRADOS
-  console.log(`🔄 Iniciando procesamiento de ${uniqueItems.length} productos únicos...`);
+  logger.info(`🔄 Iniciando procesamiento de ${uniqueItems.length} productos únicos...`);
   
   let processedCount = 0;
   let errorCount = 0;
@@ -3529,7 +3530,8 @@ async function robustSyncProductos() {
 
   for (const itemId of uniqueItems) {
     try {
-      console.log(`🔄 Procesando producto ${processedCount + 1}/${uniqueItems.length}: ${itemId}`);
+      // Esto es lo que más “spamea”: lo pasamos a debug (apagado por defecto).
+      logger.debug(`🔄 Procesando producto ${processedCount + 1}/${uniqueItems.length}: ${itemId}`);
       
       const { data: itemDetail } = await axios.get(
         `https://api.mercadolibre.com/items/${itemId}`,
@@ -3537,7 +3539,7 @@ async function robustSyncProductos() {
       );
 
       // DEBUG UNIVERSAL: Mostrar info de todos los productos para rastrear bug de precios incluso en Railway
-      console.log(`[DEBUG][ML_API] id=${itemDetail.id} price=${itemDetail.price} original=${itemDetail.original_price} title="${itemDetail.title}"`); 
+      logger.debug(`[DEBUG][ML_API] id=${itemDetail.id} price=${itemDetail.price} original=${itemDetail.original_price} title="${itemDetail.title}"`);
 
       // Obtener descripción por separado
       let description = "";
@@ -3548,7 +3550,7 @@ async function robustSyncProductos() {
         );
         description = descResponse.data.plain_text || "";
       } catch (error) {
-        console.log("⚠️ No se pudo obtener la descripción para:", itemId);
+        logger.debug("⚠️ No se pudo obtener la descripción", { itemId });
       }
 
       const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
@@ -3583,7 +3585,7 @@ async function robustSyncProductos() {
         priceEvaluation.fields.last_valid_price = itemDetail.price;
         // LOG ESPECIAL PARA AUDITORÍA AUTOMÁTICA
         if (itemDetail.id === 'MLU693479060') {
-          console.log('[SYNC] Grabando PRECIO REBAJADO de ML', {
+          logger.info("[SYNC] Grabando PRECIO REBAJADO de ML", {
             ml_id: itemDetail.id,
             precio_ml: itemDetail.price,
             original_ml: itemDetail.original_price,
@@ -3594,7 +3596,7 @@ async function robustSyncProductos() {
       }
       // REFUERZO: aunque el precio en la base sea igual, se fuerza el update.
       if (itemDetail.id === 'MLU693479060') {
-        console.log('[SYNC] Post-evaluación (antes de grabar)', {
+        logger.info("[SYNC] Post-evaluación (antes de grabar)", {
           ml_id: itemDetail.id,
           precio_ml: itemDetail.price,
           original_ml: itemDetail.original_price,
@@ -4391,7 +4393,7 @@ router.get("/sync/force-limited", async (req: Request, res: Response) => {
 
     for (const itemId of items) {
       try {
-        console.log(`🔄 Procesando producto ${processedCount + 1}/${items.length}: ${itemId}`);
+        logger.debug(`🔄 Procesando producto ${processedCount + 1}/${items.length}: ${itemId}`);
         
         const { data: itemDetail } = await axios.get(
           `https://api.mercadolibre.com/items/${itemId}`,
@@ -4407,7 +4409,7 @@ router.get("/sync/force-limited", async (req: Request, res: Response) => {
           );
           description = descResponse.data.plain_text || "";
         } catch (error) {
-          console.log("⚠️ No se pudo obtener la descripción para:", itemId);
+          logger.debug("⚠️ No se pudo obtener la descripción", { itemId });
         }
 
         const existingProduct = await Producto.findOne({ ml_id: itemDetail.id }).lean();
