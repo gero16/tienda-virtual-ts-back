@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
+import { logger } from '../utils/logger';
 
 const router = express.Router();
 
@@ -87,8 +88,8 @@ router.get('/optimize', async (req: Request, res: Response) => {
       }
     }
 
-    // Descargar imagen desde MercadoLibre
-    console.log(`📥 Descargando imagen: ${url}`);
+    // Descargar imagen desde MercadoLibre (ruidoso: dejar en debug)
+    logger.debug(`📥 Descargando imagen: ${url}`);
     const imageResponse = await axios.get(url, {
       responseType: 'arraybuffer',
       timeout: 10000,
@@ -99,8 +100,8 @@ router.get('/optimize', async (req: Request, res: Response) => {
 
     const imageBuffer = Buffer.from(imageResponse.data, 'binary');
 
-    // Optimizar imagen con Sharp
-    console.log(`⚙️ Optimizando imagen a ${targetWidth}px...`);
+    // Optimizar imagen con Sharp (ruidoso: dejar en debug)
+    logger.debug(`⚙️ Optimizando imagen a ${targetWidth}px...`);
     const optimizedBuffer = await sharp(imageBuffer)
       .resize(targetWidth, null, {
         withoutEnlargement: true,
@@ -129,7 +130,7 @@ router.get('/optimize', async (req: Request, res: Response) => {
     res.send(optimizedBuffer);
 
   } catch (error: any) {
-    console.error('❌ Error optimizando imagen:', error.message);
+    logger.error('❌ Error optimizando imagen', { error: error?.message || error });
     
     // Si falla, intentar servir la URL original (fallback)
     if (error.response?.status === 404 || error.code === 'ENOTFOUND') {
