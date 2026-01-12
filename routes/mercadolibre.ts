@@ -472,7 +472,7 @@ async function processNotification({ resource, topic, _id, accessToken }: Notifi
         await handleOrderNotification(resource, accessToken);
         break;
       default:
-        console.log(`⚠️ Topic no manejado: ${topic}`);
+        // console.log(`⚠️ Topic no manejado: ${topic}`); // Comentado para reducir logs
     }
 
     await Notificacion.findOneAndUpdate(
