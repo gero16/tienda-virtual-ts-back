@@ -11,6 +11,11 @@ import { ClienteService } from "../services/clienteService";
 
 const router = Router();
 
+// 🔒 Mecanismo de deduplicación: evitar procesar el mismo webhook múltiples veces concurrentemente
+const processingWebhooks = new Set<string>();
+const processedWebhooks = new Map<string, number>(); // paymentId -> timestamp
+const WEBHOOK_DEDUP_WINDOW = 60000; // 60 segundos: ignorar webhooks duplicados dentro de esta ventana
+
 // Formateo seguro de montos (evita 704.8800000000001, etc.)
 const formatMoney = (value: any) => {
   const n = Number(value);
@@ -25,6 +30,7 @@ const formatMoney = (value: any) => {
  * Nota: MercadoPago puede notificar por POST (webhooks) o por GET (IPN clásico)
  */
 router.all("/mercadopago", async (req: Request, res: Response) => {
+  let webhookKey: string | undefined; // Definir fuera del try para limpiar en catch
   try {
     // Responder inmediatamente a MercadoPago (requisito de la API)
     res.status(200).send("OK");
@@ -135,6 +141,25 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
       console.log(colors.red("   ❌ No se pudo determinar el payment ID"));
       return;
     }
+
+    // 🔒 DEDUPLICACIÓN: Evitar procesar el mismo webhook múltiples veces
+    const webhookKey = `${paymentId}-${rawType}`;
+    
+    // Si ya se está procesando este webhook, ignorarlo
+    if (processingWebhooks.has(webhookKey)) {
+      console.log(colors.yellow(`   ⏭️  Webhook ya en procesamiento (${webhookKey}), ignorando duplicado`));
+      return;
+    }
+    
+    // Si se procesó recientemente (dentro de la ventana de deduplicación), ignorarlo
+    const lastProcessed = processedWebhooks.get(webhookKey);
+    if (lastProcessed && Date.now() - lastProcessed < WEBHOOK_DEDUP_WINDOW) {
+      console.log(colors.yellow(`   ⏭️  Webhook procesado recientemente (${webhookKey}), ignorando duplicado`));
+      return;
+    }
+    
+    // Marcar como en procesamiento
+    processingWebhooks.add(webhookKey);
 
     // Obtener información completa del pago
     console.log(colors.yellow(`   📋 Consultando pago ${paymentId}...`));
@@ -766,10 +791,25 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
       console.error(colors.red("   ❌ Error procesando orden:"), error);
     } finally {
       session.endSession();
+      // 🔒 Limpiar estado de procesamiento
+      processingWebhooks.delete(webhookKey);
+      processedWebhooks.set(webhookKey, Date.now());
+      
+      // Limpiar entradas antiguas del Map (más de 5 minutos)
+      const fiveMinutesAgo = Date.now() - 300000;
+      for (const [key, timestamp] of processedWebhooks.entries()) {
+        if (timestamp < fiveMinutesAgo) {
+          processedWebhooks.delete(key);
+        }
+      }
     }
 
   } catch (error: any) {
     console.error(colors.red("❌ Error en webhook:"), error);
+    // 🔒 Limpiar estado de procesamiento incluso en caso de error
+    if (webhookKey) {
+      processingWebhooks.delete(webhookKey);
+    }
   }
 });
 

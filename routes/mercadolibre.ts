@@ -2434,7 +2434,7 @@ async function paginateWithLimitOptimized(token: any, limit: number, maxPages: n
       );
 
       const pageResults = itemsResponse.data.results || [];
-      console.log(`📊 Límite ${limit} - Productos en página ${totalPages}: ${pageResults.length}`);
+     // console.log(`📊 Límite ${limit} - Productos en página ${totalPages}: ${pageResults.length}`);
       
       if (pageResults.length === 0) {
         hasMore = false;
@@ -2513,7 +2513,7 @@ async function paginateWithLimit(token: any, limit: number) {
       );
 
       const pageResults = itemsResponse.data.results || [];
-      console.log(`📊 Límite ${limit} - Productos en página ${totalPages}: ${pageResults.length}`);
+      //console.log(`📊 Límite ${limit} - Productos en página ${totalPages}: ${pageResults.length}`);
       
       if (pageResults.length === 0) {
         hasMore = false;
@@ -3801,7 +3801,7 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
       );
 
       const pageResults = itemsResponse.data.results || [];
-      console.log(`📊 Límite ${limit} - Productos en página ${totalPages}: ${pageResults.length}`);
+      //console.log(`📊 Límite ${limit} - Productos en página ${totalPages}: ${pageResults.length}`);
       
       if (pageResults.length === 0) {
         hasMore = false;
