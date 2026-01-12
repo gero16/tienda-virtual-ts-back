@@ -3,6 +3,8 @@ import express, { Router, Request, Response } from "express";
 import colors from "colors";
 import mongoose from "mongoose"; // 🆕 Para transacciones atómicas
 import axios from "axios";
+import fs from "fs/promises";
+import path from "path";
 import ProductoModel from "../models/Producto";
 import Orden from "../models/Orden"; // 🆕 Importar el modelo de Orden
 import { getCurrentToken, updateStockInMercadoLibre, getCurrentStockFromMercadoLibre, propagateStockToGroup } from "./mercadolibre"; // 🆕 Importar funciones de ML
@@ -15,6 +17,22 @@ import Usuario from "../models/Usuario";
 const SUPER_ADMIN_EMAIL = "geronicola1696@gmail.com";
 
 const router = Router();
+
+// =====================
+// Métricas frontend: salida configurable (sin ensuciar consola)
+// =====================
+const FRONTEND_METRICS_CONSOLE = process.env.FRONTEND_METRICS_CONSOLE === "1";
+const FRONTEND_METRICS_FILE_ENABLED = process.env.FRONTEND_METRICS_FILE !== "0";
+const FRONTEND_METRICS_FILE_PATH =
+  process.env.FRONTEND_METRICS_FILE_PATH ||
+  path.join(process.cwd(), "logs", "frontend-metrics.ndjson");
+
+async function appendFrontendMetricLine(metric: Record<string, unknown>) {
+  if (!FRONTEND_METRICS_FILE_ENABLED) return;
+  const dir = path.dirname(FRONTEND_METRICS_FILE_PATH);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.appendFile(FRONTEND_METRICS_FILE_PATH, JSON.stringify(metric) + "\n", "utf8");
+}
 
 // =====================
 // Función de validación de cupones en backend
@@ -562,20 +580,42 @@ router.get("/payment/:id", async (req: Request, res: Response) => {
 router.post("/metrics/perf", async (req: Request, res: Response) => {
   try {
     const { page, lcp, cls, measures, userAgent, url, ts } = req.body || {};
-    console.log("\n📊 Métrica frontend recibida");
-    if (page) console.log("   page:", page);
-    if (typeof lcp === 'number') console.log("   LCP:", Math.round(lcp), "ms");
-    if (typeof cls === 'number') console.log("   CLS:", cls);
-    if (Array.isArray(measures)) {
-      for (const m of measures) {
-        if (m && typeof m.name === 'string' && typeof m.duration === 'number') {
-          console.log(`   ${m.name}: ${Math.round(m.duration)}ms`);
+
+    const metric = {
+      receivedAt: new Date().toISOString(),
+      ip: req.ip,
+      page,
+      lcp,
+      cls,
+      measures,
+      userAgent,
+      url,
+      ts,
+    };
+
+    // Guardar en archivo (por defecto) sin imprimir en consola
+    void appendFrontendMetricLine(metric).catch((e) => {
+      console.error("Error guardando métricas frontend:", e);
+    });
+
+    // Si querés verlas en consola, activalo con FRONTEND_METRICS_CONSOLE=1
+    if (FRONTEND_METRICS_CONSOLE) {
+      console.log("\n📊 Métrica frontend recibida");
+      if (page) console.log("   page:", page);
+      if (typeof lcp === "number") console.log("   LCP:", Math.round(lcp), "ms");
+      if (typeof cls === "number") console.log("   CLS:", cls);
+      if (Array.isArray(measures)) {
+        for (const m of measures) {
+          if (m && typeof m.name === "string" && typeof m.duration === "number") {
+            console.log(`   ${m.name}: ${Math.round(m.duration)}ms`);
+          }
         }
       }
+      if (userAgent) console.log("   UA:", String(userAgent).slice(0, 200));
+      if (url) console.log("   URL:", url);
+      if (ts) console.log("   ts:", ts);
     }
-    if (userAgent) console.log("   UA:", String(userAgent).slice(0, 200));
-    if (url) console.log("   URL:", url);
-    if (ts) console.log("   ts:", ts);
+
     return res.status(204).send();
   } catch (e) {
     console.error("Error registrando métricas:", e);
