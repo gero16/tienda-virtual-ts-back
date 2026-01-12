@@ -64,12 +64,13 @@ function getCorrectPermalink(itemDetail: any): string {
   const correctPermalink = `https://articulo.mercadolibre.com.uy/${normalizedId}`;
   
   // Log si el permalink de la API es diferente (para debugging)
-  const apiPermalink = itemDetail.permalink;
-  if (apiPermalink && !apiPermalink.includes(mlId.replace('-', ''))) {
-    console.log(`⚠️ Permalink de API incorrecto detectado para ${mlId}`);
-    console.log(`   API devolvió: ${apiPermalink}`);
-    console.log(`   Usando permalink construido: ${correctPermalink}`);
-  }
+  // Comentado para reducir logs en producción
+  // const apiPermalink = itemDetail.permalink;
+  // if (apiPermalink && !apiPermalink.includes(mlId.replace('-', ''))) {
+  //   console.log(`⚠️ Permalink de API incorrecto detectado para ${mlId}`);
+  //   console.log(`   API devolvió: ${apiPermalink}`);
+  //   console.log(`   Usando permalink construido: ${correctPermalink}`);
+  // }
   
   return correctPermalink;
 }
@@ -1348,7 +1349,7 @@ async function forceUpdateProductos() {
         await producto.save();
       }
 
-      console.log(`✅ Producto ${itemId} sincronizado correctamente`);
+      // console.log(`✅ Producto ${itemId} sincronizado correctamente`); // Comentado para reducir logs
       
       // --- 🚀 LÓGICA DE DROPSHIPPING ---
       const manufacturingTime = itemDetail.sale_terms?.find((term: any) => 
@@ -3746,7 +3747,7 @@ async function robustSyncProductos() {
         { new: true }
       );
       
-      console.log(`✅ Producto ${itemId} sincronizado correctamente`);
+      // console.log(`✅ Producto ${itemId} sincronizado correctamente`); // Comentado para reducir logs
       
       processedCount++;
       
@@ -4501,7 +4502,7 @@ router.get("/sync/force-limited", async (req: Request, res: Response) => {
         );
 
         processedCount++;
-        console.log(`✅ Producto ${itemId} sincronizado correctamente`);
+        // console.log(`✅ Producto ${itemId} sincronizado correctamente`); // Comentado para reducir logs
         
         // Pausa entre productos
         await new Promise(resolve => setTimeout(resolve, 200));
