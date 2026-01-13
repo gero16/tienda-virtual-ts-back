@@ -142,8 +142,10 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
       return;
     }
 
-    // 🔒 DEDUPLICACIÓN: Evitar procesar el mismo webhook múltiples veces
-    const webhookKey = `${paymentId}-${rawType}`;
+    // 🔒 DEDUPLICACIÓN: Evitar procesar el mismo paymentId múltiples veces.
+    // MP puede notificar el MISMO pago por 'payment' y por 'merchant_order'.
+    // Si deduplicamos por (paymentId + tipo), terminamos procesando doble.
+    webhookKey = String(paymentId);
     
     // Si ya se está procesando este webhook, ignorarlo
     if (processingWebhooks.has(webhookKey)) {
@@ -177,6 +179,10 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
     console.log(colors.cyan(`   💵 Monto: $${formatMoney(paymentData.transaction_amount)} ${paymentData.currency_id}`));
     console.log(colors.cyan(`   🆔 External Reference: ${paymentData.external_reference}`));
     console.log(colors.cyan(`   🧪 Live Mode: ${paymentData.live_mode}`));
+    // Fechas útiles para diagnosticar "webhook tardío" vs "pago aprobado tarde"
+    if (paymentData.date_created) console.log(colors.cyan(`   🕒 MP date_created: ${paymentData.date_created}`));
+    if (paymentData.date_last_updated) console.log(colors.cyan(`   🔁 MP date_last_updated: ${paymentData.date_last_updated}`));
+    if (paymentData.date_approved) console.log(colors.cyan(`   ✅ MP date_approved: ${paymentData.date_approved}`));
 
     // 🧪 IMPORTANTE: Detectar si es un pago de PRUEBA (sandbox)
     const esPagoDePrueba = paymentData.live_mode === false;
@@ -226,6 +232,15 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
       ? colors.green("   ♻️ Actualizando orden existente...") 
       : colors.green("   ✅ Creando nueva orden..."));
 
+    const wasApproved =
+      String(ordenExistente?.payment_status || '').toLowerCase() === 'approved' ||
+      String(ordenExistente?.status || '').toLowerCase() === 'approved';
+
+    // Solo aplicar efectos colaterales (stock) cuando el pago transiciona a approved.
+    // Esto evita doble descuento cuando llegan notificaciones duplicadas (payment + merchant_order / reintentos).
+    const shouldApplyApprovedSideEffects =
+      String(paymentData.status || '').toLowerCase() === 'approved' && !wasApproved;
+
     // Iniciar transacción de MongoDB
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -265,13 +280,14 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
         }];
       }
 
-      // Si es approved, actualizar stock en BD
-      if (paymentData.status === 'approved') {
+      // Si el pago pasó a approved (transición), actualizar stock en BD UNA sola vez
+      if (shouldApplyApprovedSideEffects) {
         console.log(colors.yellow("   📦 Actualizando stock en BD local..."));
         for (const item of itemsFromMetadata) {
           const producto = await ProductoModel.findOne({ ml_id: item.id }).session(session);
           if (producto) {
-            const nuevoStock = producto.available_quantity - item.quantity;
+            const nuevoStockRaw = producto.available_quantity - item.quantity;
+            const nuevoStock = Math.max(0, nuevoStockRaw);
             await ProductoModel.updateOne(
               { ml_id: item.id },
               { $set: { available_quantity: Math.max(0, nuevoStock) } },
@@ -280,10 +296,12 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
             console.log(colors.green(`      ✅ BD Local - ${item.title}: ${producto.available_quantity} → ${nuevoStock}`));
           }
         }
+      } else if (String(paymentData.status || '').toLowerCase() === 'approved' && wasApproved) {
+        console.log(colors.yellow("   ⏭️  Orden ya estaba aprobada: no se descuenta stock nuevamente"));
       }
 
       // 🔥 IMPORTANTE: Actualizar stock EN MERCADOLIBRE solo si approved
-      if (paymentData.status === 'approved') {
+      if (shouldApplyApprovedSideEffects) {
         console.log(colors.yellow("   🛍️  Actualizando stock en MercadoLibre..."));
       
       try {

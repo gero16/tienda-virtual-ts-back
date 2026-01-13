@@ -19,6 +19,7 @@ import verificarUSD from './routes/verificarUSD'; // 🆕 Verificar soporte de U
 import authRoutes from './routes/auth'; // 🆕 Rutas de autenticación
 import eventos from './routes/eventos'; // 🆕 Rutas de eventos especiales
 import images from './routes/images'; // 🆕 Rutas de optimización de imágenes
+import { startMercadoPagoReconciliation } from './services/mpReconciliation';
 
 const app : Express = express();
 const port = 3000;
@@ -134,6 +135,9 @@ conectarDB()
 
 // Ejecutar seeding de admin si corresponde
 seedAdmin();
+
+// 🔄 Reconciliación automática de órdenes pendientes vs MercadoPago
+startMercadoPagoReconciliation();
 
 app.listen(port, () => {
   console.log(`Servidor Express corriendo en http://localhost:${port}`);
