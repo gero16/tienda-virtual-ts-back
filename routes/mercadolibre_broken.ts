@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import axios from "axios";
+import { logger } from "../utils/logger";
 import Token from "../models/Token";
 import Notificacion from "../models/Notificacion";
 import Producto from "../models/Producto";
@@ -36,7 +37,7 @@ async function processNotification({ resource, topic, _id, accessToken }: Notifi
         await handleOrderNotification(resource, accessToken);
         break;
       default:
-        console.log(`⚠️ Topic no manejado: ${topic}`);
+        logger.debug(`⚠️ Topic no manejado: ${topic}`);
     }
 
     await Notificacion.findOneAndUpdate(
@@ -115,7 +116,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
-    console.log(`🔄 Procesando notificación para item: ${item.id}`);
+    logger.debug(`🔄 Procesando notificación para item: ${item.id}`);
 
     // Obtener descripción por separado
     let description = "";
@@ -242,7 +243,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
 
       console.log(`✅ Producto ${item.id} actualizado con ${varianteIds.length} variantes`);
     } else {
-      console.log(`📦 Producto ${item.id} sin variantes`);
+      logger.debug(`📦 Producto ${item.id} sin variantes`);
     }
 
   } catch (error: any) {

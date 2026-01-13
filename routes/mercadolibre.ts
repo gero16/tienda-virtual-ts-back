@@ -82,7 +82,8 @@ async function retryRequest(fn: () => Promise<any>, maxRetries = 3) {
       return await fn();
     } catch (err: any) {
       const delay = (i + 1) * 1000;
-      console.warn(`⏳ Reintento ${i + 1}/${maxRetries} después de error: ${err.message}`);
+      // Evitar ruido en consola: esto es útil solo para debug
+      logger.debug(`⏳ Reintento ${i + 1}/${maxRetries} después de error: ${err.message}`);
       await new Promise(r => setTimeout(r, delay));
       if (i === maxRetries - 1) throw err;
     }
@@ -103,9 +104,9 @@ function savePartial(items: any[], name: string) {
     
     const filePath = path.join(logsDir, `sync-${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(items, null, 2));
-    console.log(`💾 Guardado parcial (${name}): ${items.length} items -> ${filePath}`);
+    logger.debug(`💾 Guardado parcial (${name}): ${items.length} items -> ${filePath}`);
   } catch (error) {
-    console.log(`⚠️ No se pudo guardar parcial ${name}:`, error);
+    logger.debug(`⚠️ No se pudo guardar parcial ${name}`, { error });
   }
 }
 
@@ -640,7 +641,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
-    console.log(`🔄 Procesando notificación para item: ${item.id}`);
+    logger.debug(`🔄 Procesando notificación para item: ${item.id}`);
 
   // Obtener descripción por separado
   let description = "";
@@ -660,7 +661,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
     
     // 🏷️ Si tiene descuento activo, recalcular precio con descuento usando el nuevo precio de ML
     if (productoExistente?.descuento?.activo) {
-      console.log(`🏷️ Producto ${item.id} tiene descuento activo (${productoExistente.descuento.porcentaje}%), preservando descuento...`);
+      logger.debug(`🏷️ Producto ${item.id} tiene descuento activo (${productoExistente.descuento.porcentaje}%), preservando descuento...`);
       // Actualizar precio_original con el nuevo precio de ML
       descuentoActualizado = {
         ...productoExistente.descuento,
@@ -668,7 +669,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       };
       // Recalcular precio con descuento
       precioActualizado = Math.round(item.price * (1 - productoExistente.descuento.porcentaje / 100) * 100) / 100;
-      console.log(`   Precio ML: $${item.price} → Precio con descuento: $${precioActualizado}`);
+      logger.debug(`Precio ML: $${item.price} → Precio con descuento: $${precioActualizado}`);
     }
 
     // --- Detectar descuento nativo de MercadoLibre ---
@@ -699,7 +700,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       priceEvaluation.fields.price = item.price;
       priceEvaluation.fields.last_valid_price = item.price;
       precioActualizado = item.price;
-      console.log(`💰 Descuento ML detectado para ${item.id}: Precio original $${item.original_price} → Precio rebajado $${item.price}`);
+      logger.debug(`💰 Descuento ML detectado para ${item.id}: Precio original $${item.original_price} → Precio rebajado $${item.price}`);
     }
 
     // --- Actualizar/Crear Producto ---
@@ -752,7 +753,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
 
     // --- 🚀 DETECCIÓN Y PROCESAMIENTO DE VARIANTES ---
     if (item.variations && item.variations.length > 0) {
-      console.log(`🎨 Detectadas ${item.variations.length} variantes para producto ${item.id}`);
+      logger.debug(`🎨 Detectadas ${item.variations.length} variantes para producto ${item.id}`);
       
       // Obtener variantes existentes en la DB para comparar
       const variantesExistentes = await Variante.find({ product_id: producto._id });
@@ -762,13 +763,13 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       // Detectar variantes nuevas
       const variantesNuevas = idsNuevas.filter((id: string) => !idsExistentes.includes(id));
       if (variantesNuevas.length > 0) {
-        console.log(`✨ Se detectaron ${variantesNuevas.length} variantes NUEVAS:`, variantesNuevas);
+        logger.debug(`✨ Se detectaron ${variantesNuevas.length} variantes NUEVAS`, variantesNuevas);
       }
 
       // Detectar variantes eliminadas
       const variantesEliminadas = idsExistentes.filter((id: string) => !idsNuevas.includes(id));
       if (variantesEliminadas.length > 0) {
-        console.log(`🗑️ Se detectaron ${variantesEliminadas.length} variantes ELIMINADAS:`, variantesEliminadas);
+        logger.debug(`🗑️ Se detectaron ${variantesEliminadas.length} variantes ELIMINADAS`, variantesEliminadas);
         await Variante.deleteMany({ id: { $in: variantesEliminadas } });
       }
 
@@ -786,7 +787,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
           (a: any) => a.id === "SIZE"
         )?.value_name || null;
 
-        console.log(`🔧 Procesando variante ${variante.id}: Color=${color}, Talla=${size}, Stock=${variante.available_quantity}`);
+        logger.debug(`🔧 Procesando variante ${variante.id}: Color=${color}, Talla=${size}, Stock=${variante.available_quantity}`);
 
         // 🆕 CALCULAR INFORMACIÓN DE DROPSHIPPING PARA LA VARIANTE
         // Usar la misma información ya calculada para el producto
@@ -861,9 +862,9 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       producto.variantes = varianteIds.map(id => new Types.ObjectId(id));
       await producto.save();
 
-      console.log(`✅ Producto ${item.id} actualizado con ${varianteIds.length} variantes`);
+      logger.debug(`✅ Producto ${item.id} actualizado con ${varianteIds.length} variantes`);
     } else {
-      console.log(`📦 Producto ${item.id} sin variantes`);
+      logger.debug(`📦 Producto ${item.id} sin variantes`);
     }
 
     // --- 🚀 LÓGICA DE DROPSHIPPING (APLICADA A TODOS LOS PRODUCTOS) ---
@@ -913,7 +914,7 @@ async function handleItemNotification(resourceUrl: string, accessToken: string) 
       { new: true }
     );
     
-    console.log(`🎯 Producto ${item.id} clasificado como: ${productType} (${handlingTime} días)`);
+    logger.debug(`🎯 Producto ${item.id} clasificado como: ${productType} (${handlingTime} días)`);
     await Producto.findOneAndUpdate(
       { ml_id: item.id },
       { $set: updateData },
@@ -1398,7 +1399,7 @@ async function forceUpdateProductos() {
         { new: true }
       );
       
-      console.log(`🎯 Producto ${itemId} clasificado como: ${productType} (${handlingTime} días)`);
+      logger.debug(`🎯 Producto ${itemId} clasificado como: ${productType} (${handlingTime} días)`);
       
       processedCount++;
       
@@ -1410,11 +1411,11 @@ async function forceUpdateProductos() {
     }
   }
   
-  console.log(`🎉 SINCRONIZACIÓN COMPLETADA:`);
-  console.log(`✅ Productos procesados exitosamente: ${processedCount}`);
-  console.log(`❌ Productos con errores: ${errorCount}`);
-  console.log(`📊 Total de productos encontrados en ML: ${allItems.length}`);
-  console.log(`📊 Total de productos en base de datos: ${await Producto.countDocuments()}`);
+  logger.debug(`🎉 SINCRONIZACIÓN COMPLETADA:`);
+  logger.debug(`✅ Productos procesados exitosamente: ${processedCount}`);
+  logger.debug(`❌ Productos con errores: ${errorCount}`);
+  logger.debug(`📊 Total de productos encontrados en ML: ${allItems.length}`);
+  logger.debug(`📊 Total de productos en base de datos: ${await Producto.countDocuments()}`);
 }
 // 🚀 Endpoint OPTIMIZADO con paginación para carga rápida
 // (ANTIGUO) Duplicado: consolidar en el de más abajo
@@ -2358,7 +2359,7 @@ async function advancedSyncProductos() {
   const token = await getCurrentToken();
   if (!token) throw new Error("No autenticado");
 
-  console.log(`🚀 Iniciando sincronización avanzada optimizada para user_id: ${token.user_id}`);
+  logger.debug(`🚀 Iniciando sincronización avanzada optimizada para user_id: ${token.user_id}`);
   
   let allItems: string[] = [];
   let totalProcessed = 0;
@@ -2366,7 +2367,7 @@ async function advancedSyncProductos() {
   const strategies = [];
 
   // Solo usar las estrategias más efectivas y rápidas
-  console.log("📋 Estrategia 1: Paginación con límite 25 (más páginas)");
+  logger.debug("📋 Estrategia 1: Paginación con límite 25 (más páginas)");
   try {
     const strategy1 = await paginateWithLimitOptimized(token, 25, 40); // Máximo 40 páginas
     allItems = [...new Set([...allItems, ...strategy1.items])];
@@ -2377,7 +2378,7 @@ async function advancedSyncProductos() {
     console.error("❌ Error en estrategia 1:", error);
   }
 
-  console.log("📋 Estrategia 2: Paginación con límite 50 (actual)");
+  logger.debug("📋 Estrategia 2: Paginación con límite 50 (actual)");
   try {
     const strategy2 = await paginateWithLimitOptimized(token, 50, 30); // Máximo 30 páginas
     allItems = [...new Set([...allItems, ...strategy2.items])];
@@ -2388,7 +2389,7 @@ async function advancedSyncProductos() {
     console.error("❌ Error en estrategia 2:", error);
   }
 
-  console.log("📋 Estrategia 3: Sincronización por estados principales");
+  logger.debug("📋 Estrategia 3: Sincronización por estados principales");
   try {
     const strategy3 = await syncByStatusOptimized(token);
     allItems = [...new Set([...allItems, ...strategy3.items])];
@@ -2399,11 +2400,11 @@ async function advancedSyncProductos() {
     console.error("❌ Error en estrategia 3:", error);
   }
 
-  console.log(`🎉 SINCRONIZACIÓN AVANZADA COMPLETADA:`);
-  console.log(`📊 Total de productos únicos encontrados: ${allItems.length}`);
-  console.log(`📊 Total procesados: ${totalProcessed}`);
-  console.log(`📊 Total errores: ${totalErrors}`);
-  console.log(`📊 Estrategias ejecutadas: ${strategies.length}`);
+  logger.debug(`🎉 SINCRONIZACIÓN AVANZADA COMPLETADA:`);
+  logger.debug(`📊 Total de productos únicos encontrados: ${allItems.length}`);
+  logger.debug(`📊 Total procesados: ${totalProcessed}`);
+  logger.debug(`📊 Total errores: ${totalErrors}`);
+  logger.debug(`📊 Estrategias ejecutadas: ${strategies.length}`);
 
   return {
     totalItems: allItems.length,
@@ -2425,7 +2426,7 @@ async function paginateWithLimitOptimized(token: any, limit: number, maxPages: n
 
   while (hasMore && totalPages < maxPages) {
     totalPages++;
-    console.log(`📄 Límite ${limit} - Página ${totalPages}/${maxPages} (offset: ${offset})`);
+    logger.debug(`📄 Límite ${limit} - Página ${totalPages}/${maxPages} (offset: ${offset})`);
     
     try {
       const itemsResponse = await axios.get(
@@ -2438,7 +2439,7 @@ async function paginateWithLimitOptimized(token: any, limit: number, maxPages: n
       
       if (pageResults.length === 0) {
         hasMore = false;
-        console.log(`✅ Límite ${limit} - No hay más productos. Páginas procesadas: ${totalPages - 1}`);
+        logger.debug(`✅ Límite ${limit} - No hay más productos. Páginas procesadas: ${totalPages - 1}`);
       } else {
         allItems = allItems.concat(pageResults);
         offset += limit;
@@ -2453,7 +2454,7 @@ async function paginateWithLimitOptimized(token: any, limit: number, maxPages: n
       
       if (error.response?.status === 400) {
         hasMore = false;
-        console.log(`⚠️ Límite ${limit} - Error 400, deteniendo paginación`);
+        logger.debug(`⚠️ Límite ${limit} - Error 400, deteniendo paginación`);
       } else {
         offset += limit;
       }
@@ -2471,7 +2472,7 @@ async function syncByStatusOptimized(token: any) {
   let errors = 0;
 
   for (const status of statuses) {
-    console.log(`📋 Sincronizando productos con estado: ${status}`);
+    logger.debug(`📋 Sincronizando productos con estado: ${status}`);
     try {
       const response = await axios.get(
         `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&limit=50`,
@@ -2481,7 +2482,7 @@ async function syncByStatusOptimized(token: any) {
       const results = response.data.results || [];
       allItems = allItems.concat(results);
       processed += results.length;
-      console.log(`📊 Estado ${status}: ${results.length} productos encontrados`);
+      logger.debug(`📊 Estado ${status}: ${results.length} productos encontrados`);
       
       await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
@@ -2504,7 +2505,7 @@ async function paginateWithLimit(token: any, limit: number) {
 
   while (hasMore) {
     totalPages++;
-    console.log(`📄 Límite ${limit} - Página ${totalPages} (offset: ${offset})`);
+    logger.debug(`📄 Límite ${limit} - Página ${totalPages} (offset: ${offset})`);
     
     try {
       const itemsResponse = await axios.get(
@@ -2517,7 +2518,7 @@ async function paginateWithLimit(token: any, limit: number) {
       
       if (pageResults.length === 0) {
         hasMore = false;
-        console.log(`✅ Límite ${limit} - No hay más productos. Páginas procesadas: ${totalPages - 1}`);
+        logger.debug(`✅ Límite ${limit} - No hay más productos. Páginas procesadas: ${totalPages - 1}`);
       } else {
         allItems = allItems.concat(pageResults);
         offset += limit;
@@ -2532,7 +2533,7 @@ async function paginateWithLimit(token: any, limit: number) {
       
       if (error.response?.status === 400) {
         hasMore = false;
-        console.log(`⚠️ Límite ${limit} - Error 400, deteniendo paginación`);
+        logger.debug(`⚠️ Límite ${limit} - Error 400, deteniendo paginación`);
       } else {
         offset += limit;
         if (totalPages > 30) { // Límite de seguridad
@@ -2553,7 +2554,7 @@ async function syncByStatus(token: any) {
   let errors = 0;
 
   for (const status of statuses) {
-    console.log(`📋 Sincronizando productos con estado: ${status}`);
+    logger.debug(`📋 Sincronizando productos con estado: ${status}`);
     try {
       const response = await axios.get(
         `https://api.mercadolibre.com/users/${token.user_id}/items/search?status=${status}&limit=50`,
@@ -2563,7 +2564,7 @@ async function syncByStatus(token: any) {
       const results = response.data.results || [];
       allItems = allItems.concat(results);
       processed += results.length;
-      console.log(`📊 Estado ${status}: ${results.length} productos encontrados`);
+      logger.debug(`📊 Estado ${status}: ${results.length} productos encontrados`);
       
       await new Promise(resolve => setTimeout(resolve, 200));
     } catch (error) {
@@ -3761,11 +3762,11 @@ async function robustSyncProductos() {
     }
   }
   
-  console.log(`🎉 PROCESAMIENTO COMPLETADO:`);
-  console.log(`✅ Productos procesados exitosamente: ${processedCount}`);
-  console.log(`❌ Productos con errores: ${errorCount}`);
-  console.log(`📊 Total de productos únicos encontrados: ${uniqueItems.length}`);
-  console.log(`📊 Total de productos en base de datos: ${await Producto.countDocuments()}`);
+  logger.debug(`🎉 PROCESAMIENTO COMPLETADO:`);
+  logger.debug(`✅ Productos procesados exitosamente: ${processedCount}`);
+  logger.debug(`❌ Productos con errores: ${errorCount}`);
+  logger.debug(`📊 Total de productos únicos encontrados: ${uniqueItems.length}`);
+  logger.debug(`📊 Total de productos en base de datos: ${await Producto.countDocuments()}`);
 
   return {
     totalItems: uniqueItems.length,
@@ -3789,7 +3790,7 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
 
   while (hasMore && totalPages < maxPages) {
     totalPages++;
-    console.log(`📄 Límite ${limit} - Página ${totalPages}/${maxPages} (offset: ${offset})`);
+    logger.debug(`📄 Límite ${limit} - Página ${totalPages}/${maxPages} (offset: ${offset})`);
     
     try {
       // Usar retryRequest para reintentos automáticos
@@ -3805,7 +3806,7 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
       
       if (pageResults.length === 0) {
         hasMore = false;
-        console.log(`✅ Límite ${limit} - No hay más productos. Total: ${allItems.length}`);
+        logger.debug(`✅ Límite ${limit} - No hay más productos. Total: ${allItems.length}`);
       } else {
         allItems = allItems.concat(pageResults);
         offset += limit;
@@ -3823,10 +3824,10 @@ async function paginateWithLimitRobust(token: any, limit: number, maxPages: numb
       
       if (error.response?.status === 400) {
         hasMore = false;
-        console.log(`⚠️ Límite ${limit} - API rechazó offset ${offset}, capturados: ${allItems.length}`);
+        logger.debug(`⚠️ Límite ${limit} - API rechazó offset ${offset}, capturados: ${allItems.length}`);
       } else if (consecutiveErrors >= maxConsecutiveErrors) {
         hasMore = false;
-        console.log(`⚠️ Límite ${limit} - Demasiados errores consecutivos, deteniendo`);
+        logger.debug(`⚠️ Límite ${limit} - Demasiados errores consecutivos, deteniendo`);
       } else {
         offset += limit;
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -3846,7 +3847,7 @@ async function syncByStatusRobust(token: any) {
   let errors = 0;
 
   for (const status of statuses) {
-    console.log(`📋 Sincronizando productos con estado: ${status}`);
+    logger.debug(`📋 Sincronizando productos con estado: ${status}`);
     try {
       let offset = 0;
       let hasMore = true;
@@ -3875,7 +3876,7 @@ async function syncByStatusRobust(token: any) {
           await new Promise(resolve => setTimeout(resolve, 300));
         } catch (error: any) {
           if (error.response?.status === 400) {
-            console.log(`⚠️ Estado ${status} - API rechazó offset ${offset}, capturados: ${statusProcessed}`);
+            logger.debug(`⚠️ Estado ${status} - API rechazó offset ${offset}, capturados: ${statusProcessed}`);
             hasMore = false;
           } else {
             throw error;
@@ -3883,7 +3884,7 @@ async function syncByStatusRobust(token: any) {
         }
       }
       
-      console.log(`📊 Estado ${status}: ${statusProcessed} productos`);
+      logger.debug(`📊 Estado ${status}: ${statusProcessed} productos`);
     } catch (error) {
       console.error(`❌ Error sincronizando estado ${status}:`, error);
       errors++;
@@ -3900,7 +3901,7 @@ async function syncViaPublicSearch(token: any) {
   let processed = 0;
   let errors = 0;
 
-  console.log("🔍 Usando API de búsqueda pública (sin límite de offset?)...");
+  logger.debug("🔍 Usando API de búsqueda pública (sin límite de offset?)...");
   
   try {
     let offset = 0;
@@ -3920,7 +3921,7 @@ async function syncViaPublicSearch(token: any) {
         );
         
         const results = response.data.results || [];
-        console.log(`📄 Búsqueda pública - Página ${totalPages}, offset ${offset}: ${results.length} productos`);
+        logger.debug(`📄 Búsqueda pública - Página ${totalPages}, offset ${offset}: ${results.length} productos`);
         
         if (results.length === 0) {
           hasMore = false;
@@ -3935,7 +3936,7 @@ async function syncViaPublicSearch(token: any) {
         await new Promise(resolve => setTimeout(resolve, 300));
       } catch (error: any) {
         if (error.response?.status === 400) {
-          console.log(`⚠️ Búsqueda pública - Offset ${offset} rechazado`);
+          logger.debug(`⚠️ Búsqueda pública - Offset ${offset} rechazado`);
           hasMore = false;
         } else {
           throw error;
@@ -3943,9 +3944,10 @@ async function syncViaPublicSearch(token: any) {
       }
     }
     
-    console.log(`📊 Búsqueda pública capturó: ${allItems.length} productos`);
+    logger.debug(`📊 Búsqueda pública capturó: ${allItems.length} productos`);
   } catch (error: any) {
-    console.error(`❌ Error en búsqueda pública:`, error.message);
+    // Muy común que el endpoint público devuelva 403/limitaciones; dejarlo en debug para evitar ruido
+    logger.debug(`❌ Error en búsqueda pública: ${error.message}`);
     errors++;
   }
 
