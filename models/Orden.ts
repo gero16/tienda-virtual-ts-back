@@ -55,6 +55,7 @@ export interface IOrden extends Document {
   date_created: Date;
   date_approved?: Date;
   date_updated?: Date;
+  mp_last_checked_at?: Date;
   
   // Estado de la orden
   status: 'pending' | 'approved' | 'rejected' | 'cancelled';
@@ -125,6 +126,7 @@ const OrdenSchema = new Schema<IOrden>({
   date_created: { type: Date, default: Date.now },
   date_approved: { type: Date },
   date_updated: { type: Date },
+  mp_last_checked_at: { type: Date },
   
   // Estado de la orden
   status: { 

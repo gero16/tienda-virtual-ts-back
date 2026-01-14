@@ -175,6 +175,7 @@ export function startMercadoPagoReconciliation() {
   const intervalMs = envInt("MP_RECONCILE_INTERVAL_MS", 5 * 60 * 1000);
   const minAgeMinutes = envInt("MP_RECONCILE_MIN_AGE_MINUTES", 10);
   const maxPerRun = envInt("MP_RECONCILE_MAX_PER_RUN", 30);
+  const recheckMinutes = envInt("MP_RECONCILE_RECHECK_MINUTES", 60);
   const debug = envBool("MP_RECONCILE_DEBUG", false);
   const createNotifications = envBool("MP_RECONCILE_CREATE_NOTIFICATIONS", true);
 
@@ -190,13 +191,16 @@ export function startMercadoPagoReconciliation() {
 
     try {
       const minAgeDate = new Date(Date.now() - minAgeMinutes * 60 * 1000);
+      const recheckCutoff = new Date(Date.now() - recheckMinutes * 60 * 1000);
 
       // Buscar órdenes pendientes lo suficientemente viejas como para reconciliar
       const pendingOrders = await Orden.find({
         status: "pending",
         date_created: { $lte: minAgeDate },
+        $or: [{ mp_last_checked_at: { $exists: false } }, { mp_last_checked_at: { $lte: recheckCutoff } }],
       })
-        .sort({ date_created: 1 })
+        // Priorizar las nunca chequeadas; luego las más viejas
+        .sort({ mp_last_checked_at: 1, date_created: 1 })
         .limit(maxPerRun);
 
       if (!pendingOrders.length) return;
@@ -212,6 +216,11 @@ export function startMercadoPagoReconciliation() {
         const externalRef = String(order.external_reference || "").trim();
         const prefId = String(order.payment_id || "").trim(); // en Checkout Pro guardás el preference_id en payment_id cuando creás la orden pending
         if (!externalRef) continue;
+
+        // Marcar que se está chequeando (para no atascarse siempre con las mismas 30)
+        try {
+          await Orden.updateOne({ _id: order._id }, { $set: { mp_last_checked_at: new Date() } });
+        } catch {}
 
         // Consultar MP por external_reference
         let mpPayment: MpPayment | null = null;
@@ -293,6 +302,7 @@ export function startMercadoPagoReconciliation() {
                       payment_status: "cancelled",
                       payment_status_detail: `merchant_order_${moStatus || "closed"}`,
                       date_updated: new Date(),
+                      mp_last_checked_at: new Date(),
                       notes:
                         (fresh.notes ? fresh.notes + "\n" : "") +
                         `[RECONCILIATION] merchant_order=${merchantOrder.id}; status=${moStatus}; ext_ref=${externalRef}; checked_at=${new Date().toISOString()}`,
@@ -386,6 +396,7 @@ export function startMercadoPagoReconciliation() {
                 status: nextStatus,
                 date_approved: mpPayment.date_approved ? new Date(mpPayment.date_approved) : fresh.date_approved,
                 date_updated: new Date(),
+                mp_last_checked_at: new Date(),
                 notes:
                   (fresh.notes ? fresh.notes + "\n" : "") +
                   `[RECONCILIATION] status=${mpStatus}; payment_id=${mpPayment.id}; ext_ref=${externalRef}; checked_at=${new Date().toISOString()}`,
