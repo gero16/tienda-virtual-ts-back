@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Orden from "../models/Orden";
 import ProductoModel from "../models/Producto";
 import { getCurrentToken, getCurrentStockFromMercadoLibre, propagateStockToGroup, updateStockInMercadoLibre } from "../routes/mercadolibre";
+import AdminNotification from "../models/AdminNotification";
 
 type MpPayment = {
   id: number;
@@ -124,6 +125,8 @@ export function startMercadoPagoReconciliation() {
   const intervalMs = envInt("MP_RECONCILE_INTERVAL_MS", 5 * 60 * 1000);
   const minAgeMinutes = envInt("MP_RECONCILE_MIN_AGE_MINUTES", 10);
   const maxPerRun = envInt("MP_RECONCILE_MAX_PER_RUN", 30);
+  const debug = envBool("MP_RECONCILE_DEBUG", false);
+  const createNotifications = envBool("MP_RECONCILE_CREATE_NOTIFICATIONS", true);
 
   if (!enabled) {
     console.log(colors.yellow("🟡 MP Reconciliation deshabilitado (MP_RECONCILE_ENABLED=false)"));
@@ -149,6 +152,11 @@ export function startMercadoPagoReconciliation() {
       if (!pendingOrders.length) return;
 
       console.log(colors.blue(`\n🔎 MP Reconciliation: revisando ${pendingOrders.length} órdenes pendientes...`));
+      let updated = 0;
+      let noPayment = 0;
+      let mpStillPending = 0;
+      let errors = 0;
+      let debugShown = 0;
 
       for (const order of pendingOrders) {
         const externalRef = String(order.external_reference || "").trim();
@@ -160,16 +168,31 @@ export function startMercadoPagoReconciliation() {
           mpPayment = await searchLatestPaymentByExternalReference(externalRef);
         } catch (e: any) {
           console.log(colors.yellow(`   ⚠️ MP search falló para ${externalRef}: ${e?.message || e}`));
+          errors += 1;
           continue;
         }
 
-        if (!mpPayment) continue;
+        if (!mpPayment) {
+          noPayment += 1;
+          if (debug && debugShown < 5) {
+            debugShown += 1;
+            console.log(colors.gray(`   💤 Sin pagos en MP para ext_ref=${externalRef} (se omite)`));
+          }
+          continue;
+        }
 
         const mpStatus = String(mpPayment.status || "").toLowerCase();
         if (!mpStatus) continue;
 
         // Si sigue pending/in_process, no tocar aún
-        if (["pending", "in_process", "in_mediation", "authorized"].includes(mpStatus)) continue;
+        if (["pending", "in_process", "in_mediation", "authorized"].includes(mpStatus)) {
+          mpStillPending += 1;
+          if (debug && debugShown < 5) {
+            debugShown += 1;
+            console.log(colors.gray(`   ⏳ MP status=${mpStatus} para ext_ref=${externalRef} (se omite)`));
+          }
+          continue;
+        }
 
         // Cargar orden fresca y aplicar transición de estado de forma idempotente
         const session = await mongoose.startSession();
@@ -187,9 +210,11 @@ export function startMercadoPagoReconciliation() {
             String(fresh.status || "").toLowerCase() === "approved";
 
           const nextStatus = mapOrderStatus(mpPayment.status);
+          const prevStatus = String(fresh.status || "").toLowerCase();
+          const prevPaymentStatus = String(fresh.payment_status || "").toLowerCase();
 
           // Evitar re-escribir si ya está en estado final igual
-          if (String(fresh.status || "").toLowerCase() === nextStatus && String(fresh.payment_status || "").toLowerCase() === mpStatus) {
+          if (prevStatus === nextStatus && prevPaymentStatus === mpStatus) {
             await session.commitTransaction();
             continue;
           }
@@ -225,6 +250,24 @@ export function startMercadoPagoReconciliation() {
               `   ✅ Reconciliada ${String(fresh.orden_id || fresh._id)} → ${mpStatus} (payment ${mpPayment.id})${shouldApplyApprovedSideEffects ? " + stock" : ""}`
             )
           );
+          updated += 1;
+
+          // Notificación admin (fuera de transacción)
+          if (createNotifications) {
+            try {
+              const msg = `[RECONCILIACIÓN] Orden ${fresh.orden_id} ${prevStatus || "pending"} → ${nextStatus} | MP=${mpStatus} | ${fresh.currency || ""} ${(fresh.total ?? fresh.transaction_amount ?? 0).toFixed?.(2) ?? (fresh.total ?? fresh.transaction_amount ?? 0)}`;
+              await AdminNotification.create({
+                type: "order",
+                status: "unread",
+                message: msg,
+                order_id: fresh.orden_id,
+                payment_id: String(mpPayment.id),
+                customer_email: fresh.customer?.email,
+                total: Number(fresh.total ?? fresh.transaction_amount ?? 0),
+                currency: fresh.currency || undefined,
+              } as any);
+            } catch {}
+          }
 
           // Stock en MercadoLibre (best-effort, fuera de la transacción)
           if (nextStatus === "approved" && !wasApproved) {
@@ -235,10 +278,16 @@ export function startMercadoPagoReconciliation() {
             await session.abortTransaction();
           } catch {}
           console.log(colors.red(`   ❌ Error reconciliando ${externalRef}: ${e?.message || e}`));
+          errors += 1;
         } finally {
           session.endSession();
         }
       }
+      console.log(
+        colors.cyan(
+          `📌 MP Reconciliation resumen: actualizadas=${updated} | sin_pago=${noPayment} | mp_pendiente=${mpStillPending} | errores=${errors}`
+        )
+      );
     } finally {
       running = false;
       const ms = Date.now() - startedAt;
