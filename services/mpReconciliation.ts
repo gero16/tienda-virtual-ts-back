@@ -17,6 +17,16 @@ type MpPayment = {
   date_approved?: string | null;
 };
 
+type MpMerchantOrder = {
+  id: number;
+  status?: string; // opened | closed | expired (entre otros)
+  external_reference?: string;
+  preference_id?: string;
+  payments?: Array<{ id?: number; status?: string }>;
+  date_created?: string;
+  last_updated?: string;
+};
+
 function envBool(name: string, defaultValue: boolean) {
   const v = String(process.env[name] ?? "").trim().toLowerCase();
   if (!v) return defaultValue;
@@ -35,6 +45,13 @@ function mapOrderStatus(mpStatus?: string): "pending" | "approved" | "rejected" 
   if (s === "approved") return "approved";
   if (s === "rejected") return "rejected";
   if (s === "cancelled") return "cancelled";
+  return "pending";
+}
+
+function mapOrderStatusFromMerchantOrder(moStatus?: string): "pending" | "approved" | "rejected" | "cancelled" {
+  const s = String(moStatus || "").toLowerCase();
+  // Si está cerrada/expirada y no hay pagos, en tu sistema esto equivale a "cancelled"
+  if (s === "expired" || s === "closed") return "cancelled";
   return "pending";
 }
 
@@ -69,6 +86,39 @@ async function searchLatestPaymentByExternalReference(externalReference: string)
   const selected = approved || results[0];
   if (!selected?.id) return null;
   return selected as MpPayment;
+}
+
+async function searchLatestMerchantOrder(params: { externalReference?: string; preferenceId?: string }): Promise<MpMerchantOrder | null> {
+  const token = process.env.MP_ACCESS_TOKEN;
+  if (!token) throw new Error("MP_ACCESS_TOKEN no está definido");
+
+  const qs: string[] = [];
+  if (params.externalReference) qs.push(`external_reference=${encodeURIComponent(params.externalReference)}`);
+  if (params.preferenceId) qs.push(`preference_id=${encodeURIComponent(params.preferenceId)}`);
+  qs.push(`sort=date_created&criteria=desc&limit=5`);
+
+  const url = `https://api.mercadopago.com/merchant_orders/search?${qs.join("&")}`;
+
+  const resp = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  } as any);
+
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => "");
+    throw new Error(`MP merchant_orders/search error ${resp.status}: ${txt.slice(0, 300)}`);
+  }
+
+  const data: any = await resp.json();
+  const results: any[] = Array.isArray(data?.elements) ? data.elements : Array.isArray(data?.results) ? data.results : [];
+  if (!results.length) return null;
+
+  const selected = results[0];
+  if (!selected?.id) return null;
+  return selected as MpMerchantOrder;
 }
 
 async function applyApprovedSideEffectsIfNeeded(params: {
@@ -160,6 +210,7 @@ export function startMercadoPagoReconciliation() {
 
       for (const order of pendingOrders) {
         const externalRef = String(order.external_reference || "").trim();
+        const prefId = String(order.payment_id || "").trim(); // en Checkout Pro guardás el preference_id en payment_id cuando creás la orden pending
         if (!externalRef) continue;
 
         // Consultar MP por external_reference
@@ -172,13 +223,113 @@ export function startMercadoPagoReconciliation() {
           continue;
         }
 
+        // Si no hay payment, en Checkout Pro puede existir merchant_order (cerrada/expirada) sin pagos.
+        let merchantOrder: MpMerchantOrder | null = null;
         if (!mpPayment) {
-          noPayment += 1;
-          if (debug && debugShown < 5) {
-            debugShown += 1;
-            console.log(colors.gray(`   💤 Sin pagos en MP para ext_ref=${externalRef} (se omite)`));
+          try {
+            merchantOrder =
+              (await searchLatestMerchantOrder({ externalReference: externalRef })) ||
+              (prefId ? await searchLatestMerchantOrder({ preferenceId: prefId }) : null);
+          } catch (e: any) {
+            console.log(colors.yellow(`   ⚠️ MP merchant_orders/search falló para ${externalRef}: ${e?.message || e}`));
+            errors += 1;
           }
-          continue;
+
+          // Si no hay ni payment ni merchant_order, probablemente nunca se pagó / no existe en MP aún.
+          if (!merchantOrder) {
+            noPayment += 1;
+            if (debug && debugShown < 5) {
+              debugShown += 1;
+              console.log(
+                colors.gray(
+                  `   💤 Sin payment y sin merchant_order en MP para ext_ref=${externalRef} (pref_id=${prefId || "N/A"})`
+                )
+              );
+            }
+            continue;
+          }
+
+          // Si hay merchant_order y tiene payments, elegir uno y tratarlo como payment para actualizar estado real.
+          const payments = Array.isArray(merchantOrder.payments) ? merchantOrder.payments : [];
+          const approved = payments.find((p) => String(p?.status || "").toLowerCase() === "approved");
+          const chosen = approved || payments[payments.length - 1];
+
+          if (chosen?.id) {
+            mpPayment = {
+              id: Number(chosen.id),
+              status: chosen.status,
+              external_reference: merchantOrder.external_reference || externalRef,
+            };
+          } else {
+            // merchant_order sin payments: actualizar orden como cancelled/expired si aplica
+            const moStatus = String(merchantOrder.status || "").toLowerCase();
+            const nextStatus = mapOrderStatusFromMerchantOrder(moStatus);
+            if (nextStatus !== "cancelled") {
+              mpStillPending += 1;
+              if (debug && debugShown < 5) {
+                debugShown += 1;
+                console.log(colors.gray(`   ⏳ merchant_order status=${moStatus} ext_ref=${externalRef} (se omite)`));
+              }
+              continue;
+            }
+
+            // Transición a cancelled usando merchant_order (sin payment)
+            const session = await mongoose.startSession();
+            try {
+              session.startTransaction();
+              const fresh = await Orden.findById(order._id).session(session);
+              if (!fresh) {
+                await session.abortTransaction();
+                continue;
+              }
+
+              const prevStatus = String(fresh.status || "").toLowerCase();
+              if (prevStatus !== "cancelled") {
+                await Orden.updateOne(
+                  { _id: fresh._id },
+                  {
+                    $set: {
+                      status: "cancelled",
+                      payment_status: "cancelled",
+                      payment_status_detail: `merchant_order_${moStatus || "closed"}`,
+                      date_updated: new Date(),
+                      notes:
+                        (fresh.notes ? fresh.notes + "\n" : "") +
+                        `[RECONCILIATION] merchant_order=${merchantOrder.id}; status=${moStatus}; ext_ref=${externalRef}; checked_at=${new Date().toISOString()}`,
+                    },
+                  },
+                  { session }
+                );
+                updated += 1;
+                console.log(colors.green(`   ✅ Reconciliada ${String(fresh.orden_id || fresh._id)} → cancelled (merchant_order ${merchantOrder.id})`));
+              }
+
+              await session.commitTransaction();
+
+              if (createNotifications && prevStatus !== "cancelled") {
+                try {
+                  await AdminNotification.create({
+                    type: "order",
+                    status: "unread",
+                    message: `[RECONCILIACIÓN] Orden ${fresh.orden_id} ${prevStatus || "pending"} → cancelled | merchant_order=${merchantOrder.id} (${moStatus})`,
+                    order_id: fresh.orden_id,
+                    customer_email: fresh.customer?.email,
+                    total: Number(fresh.total ?? fresh.transaction_amount ?? 0),
+                    currency: fresh.currency || undefined,
+                  } as any);
+                } catch {}
+              }
+            } catch (e: any) {
+              try {
+                await session.abortTransaction();
+              } catch {}
+              errors += 1;
+              console.log(colors.red(`   ❌ Error reconciliando (merchant_order) ${externalRef}: ${e?.message || e}`));
+            } finally {
+              session.endSession();
+            }
+            continue;
+          }
         }
 
         const mpStatus = String(mpPayment.status || "").toLowerCase();
