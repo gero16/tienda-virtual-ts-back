@@ -11,6 +11,9 @@ type MpPayment = {
   status_detail?: string;
   transaction_amount?: number;
   currency_id?: string;
+  payment_method_id?: string;
+  payment_type_id?: string;
+  installments?: number;
   external_reference?: string;
   date_created?: string;
   date_last_updated?: string;
@@ -53,6 +56,93 @@ function mapOrderStatusFromMerchantOrder(moStatus?: string): "pending" | "approv
   // Si está cerrada/expirada y no hay pagos, en tu sistema esto equivale a "cancelled"
   if (s === "expired" || s === "closed") return "cancelled";
   return "pending";
+}
+
+// Formato “humano” de notificación (mismo estilo que webhook.ts)
+function formatMoney(value: unknown) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0.00";
+  return (Math.round((n + Number.EPSILON) * 100) / 100).toFixed(2);
+}
+
+function buildAdminPaymentMessage(params: {
+  status?: string;
+  status_detail?: string;
+  currency?: string;
+  amount?: unknown;
+  payment_method_id?: string;
+  payment_type_id?: string;
+  installments?: number;
+}) {
+  const status = String(params.status || "null").toLowerCase();
+  const detail = String(params.status_detail || "");
+
+  const statusMap: Record<string, string> = {
+    approved: "Pago aprobado",
+    pending: "Pago pendiente",
+    in_process: "Pago en proceso",
+    rejected: "Pago rechazado",
+    cancelled: "Pago cancelado",
+    refunded: "Pago reembolsado",
+    partially_refunded: "Pago reembolsado parcialmente",
+    in_mediation: "Pago en mediación",
+    charged_back: "Pago revertido",
+    authorized: "Pago autorizado",
+    null: "Estado desconocido",
+  };
+
+  const detailMap: Record<string, string> = {
+    accredited: "acreditado",
+    pending_contingency: "en revisión",
+    pending_review_manual: "en revisión manual",
+    pending_waiting_payment: "esperando pago",
+    pending_waiting_transfer: "esperando transferencia",
+    cc_rejected_other_reason: "motivo desconocido",
+    cc_rejected_bad_filled_security_code: "CVV incorrecto",
+    cc_rejected_bad_filled_date: "fecha inválida",
+    cc_rejected_bad_filled_card_number: "número inválido",
+    cc_rejected_bad_filled_other: "datos incorrectos",
+    cc_rejected_insufficient_amount: "fondos insuficientes",
+    cc_rejected_high_risk: "rechazado por riesgo alto",
+    cc_rejected_call_for_authorize: "requiere autorización del banco",
+    cc_rejected_blacklist: "tarjeta bloqueada",
+    cc_rejected_card_disabled: "tarjeta deshabilitada",
+    cc_rejected_invalid_installments: "cuotas inválidas",
+    cc_rejected_max_attempts: "máximo de intentos excedido",
+    disputed_mediation: "disputa en mediación",
+    disputed_chargeback: "disputa por chargeback",
+    authorized: "autorizado",
+    pending_capture: "pendiente de captura",
+  };
+
+  const friendly = statusMap[status] || `Pago ${status}`;
+  const method = params.payment_method_id
+    ? String(params.payment_method_id).toUpperCase()
+    : params.payment_type_id
+      ? String(params.payment_type_id)
+      : "";
+  const curr = params.currency || "";
+  const amountFmt = formatMoney(params.amount ?? 0);
+  const friendlyDetail = detailMap[detail] || detail;
+
+  // Mensaje base, estilo “notificación normal”
+  let message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ""}${friendlyDetail ? ` (${friendlyDetail})` : ""}`;
+
+  // Si es pending, agregar info de cuotas si aplica (por consistencia con webhook)
+  if (status === "pending") {
+    const pendingTypes: Record<string, string> = {
+      pending_contingency: "en revisión automática",
+      pending_review_manual: "requiere revisión manual",
+      pending_waiting_payment: "esperando confirmación de pago",
+      pending_waiting_transfer: "esperando transferencia",
+      pending_capture: "pendiente de captura",
+    };
+    const pendingType = pendingTypes[detail] || friendlyDetail || detail;
+    const installmentsInfo = params.installments && params.installments > 1 ? ` - ${params.installments} cuotas` : "";
+    message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ""}${installmentsInfo} | ⏳ ${pendingType}`;
+  }
+
+  return message;
 }
 
 async function searchLatestPaymentByExternalReference(externalReference: string): Promise<MpPayment | null> {
@@ -175,7 +265,6 @@ export function startMercadoPagoReconciliation() {
   const intervalMs = envInt("MP_RECONCILE_INTERVAL_MS", 5 * 60 * 1000);
   const minAgeMinutes = envInt("MP_RECONCILE_MIN_AGE_MINUTES", 10);
   const maxPerRun = envInt("MP_RECONCILE_MAX_PER_RUN", 30);
-  const recheckMinutes = envInt("MP_RECONCILE_RECHECK_MINUTES", 60);
   const debug = envBool("MP_RECONCILE_DEBUG", false);
   const createNotifications = envBool("MP_RECONCILE_CREATE_NOTIFICATIONS", true);
 
@@ -191,16 +280,13 @@ export function startMercadoPagoReconciliation() {
 
     try {
       const minAgeDate = new Date(Date.now() - minAgeMinutes * 60 * 1000);
-      const recheckCutoff = new Date(Date.now() - recheckMinutes * 60 * 1000);
 
       // Buscar órdenes pendientes lo suficientemente viejas como para reconciliar
       const pendingOrders = await Orden.find({
         status: "pending",
         date_created: { $lte: minAgeDate },
-        $or: [{ mp_last_checked_at: { $exists: false } }, { mp_last_checked_at: { $lte: recheckCutoff } }],
       })
-        // Priorizar las nunca chequeadas; luego las más viejas
-        .sort({ mp_last_checked_at: 1, date_created: 1 })
+        .sort({ date_created: 1 })
         .limit(maxPerRun);
 
       if (!pendingOrders.length) return;
@@ -216,11 +302,6 @@ export function startMercadoPagoReconciliation() {
         const externalRef = String(order.external_reference || "").trim();
         const prefId = String(order.payment_id || "").trim(); // en Checkout Pro guardás el preference_id en payment_id cuando creás la orden pending
         if (!externalRef) continue;
-
-        // Marcar que se está chequeando (para no atascarse siempre con las mismas 30)
-        try {
-          await Orden.updateOne({ _id: order._id }, { $set: { mp_last_checked_at: new Date() } });
-        } catch {}
 
         // Consultar MP por external_reference
         let mpPayment: MpPayment | null = null;
@@ -302,7 +383,6 @@ export function startMercadoPagoReconciliation() {
                       payment_status: "cancelled",
                       payment_status_detail: `merchant_order_${moStatus || "closed"}`,
                       date_updated: new Date(),
-                      mp_last_checked_at: new Date(),
                       notes:
                         (fresh.notes ? fresh.notes + "\n" : "") +
                         `[RECONCILIATION] merchant_order=${merchantOrder.id}; status=${moStatus}; ext_ref=${externalRef}; checked_at=${new Date().toISOString()}`,
@@ -318,14 +398,23 @@ export function startMercadoPagoReconciliation() {
 
               if (createNotifications && prevStatus !== "cancelled") {
                 try {
+                  const amount = Number(fresh.total ?? fresh.transaction_amount ?? 0);
+                  const curr = fresh.currency || "";
+                  const transition = `${prevStatus || "pending"} → cancelled`;
                   await AdminNotification.create({
                     type: "order",
                     status: "unread",
-                    message: `[RECONCILIACIÓN] Orden ${fresh.orden_id} ${prevStatus || "pending"} → cancelled | merchant_order=${merchantOrder.id} (${moStatus})`,
+                    message:
+                      buildAdminPaymentMessage({
+                      status: "cancelled",
+                      status_detail: `merchant_order_${String(moStatus || "closed")}`,
+                      currency: curr,
+                      amount,
+                      }) + ` | ${transition}`,
                     order_id: fresh.orden_id,
                     customer_email: fresh.customer?.email,
-                    total: Number(fresh.total ?? fresh.transaction_amount ?? 0),
-                    currency: fresh.currency || undefined,
+                    total: amount,
+                    currency: curr || undefined,
                   } as any);
                 } catch {}
               }
@@ -396,7 +485,6 @@ export function startMercadoPagoReconciliation() {
                 status: nextStatus,
                 date_approved: mpPayment.date_approved ? new Date(mpPayment.date_approved) : fresh.date_approved,
                 date_updated: new Date(),
-                mp_last_checked_at: new Date(),
                 notes:
                   (fresh.notes ? fresh.notes + "\n" : "") +
                   `[RECONCILIATION] status=${mpStatus}; payment_id=${mpPayment.id}; ext_ref=${externalRef}; checked_at=${new Date().toISOString()}`,
@@ -417,7 +505,18 @@ export function startMercadoPagoReconciliation() {
           // Notificación admin (fuera de transacción)
           if (createNotifications) {
             try {
-              const msg = `[RECONCILIACIÓN] Orden ${fresh.orden_id} ${prevStatus || "pending"} → ${nextStatus} | MP=${mpStatus} | ${fresh.currency || ""} ${(fresh.total ?? fresh.transaction_amount ?? 0).toFixed?.(2) ?? (fresh.total ?? fresh.transaction_amount ?? 0)}`;
+              const amount = Number(fresh.total ?? fresh.transaction_amount ?? mpPayment.transaction_amount ?? 0);
+              const curr = (mpPayment.currency_id || fresh.currency || "").toString();
+              const msg =
+                buildAdminPaymentMessage({
+                status: mpStatus,
+                status_detail: (mpPayment.status_detail || "").toString(),
+                currency: curr,
+                amount,
+                payment_method_id: mpPayment.payment_method_id,
+                payment_type_id: mpPayment.payment_type_id,
+                installments: mpPayment.installments,
+                }) + ` | ${(prevStatus || "pending")} → ${nextStatus}`;
               await AdminNotification.create({
                 type: "order",
                 status: "unread",
@@ -425,8 +524,8 @@ export function startMercadoPagoReconciliation() {
                 order_id: fresh.orden_id,
                 payment_id: String(mpPayment.id),
                 customer_email: fresh.customer?.email,
-                total: Number(fresh.total ?? fresh.transaction_amount ?? 0),
-                currency: fresh.currency || undefined,
+                total: amount,
+                currency: curr || undefined,
               } as any);
             } catch {}
           }
