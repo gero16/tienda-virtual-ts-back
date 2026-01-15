@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import colors from "colors";
+import mongoose from "mongoose";
 import Orden from "../models/Orden";
 import { authenticate, authorize } from "../middleware/auth";
 
@@ -69,7 +70,8 @@ async function mpSearchMerchantOrders(params: { externalReference?: string; pref
 }
 
 /**
- * GET /api/admin/mp/reconcile-check?order_id=ORD-...|mongoId|external_reference|payment_id(prefId)
+ * GET /api/admin/mp/reconcile-check?order_id=<orden_id>|external_reference|preference_id
+ * (Compat) también acepta `order_id` como `_id` de Mongo si es un ObjectId válido.
  * Devuelve qué ve MercadoPago para esa orden (payments y merchant_orders).
  */
 router.get("/reconcile-check", authenticate, authorize("admin"), async (req: Request, res: Response) => {
@@ -80,9 +82,12 @@ router.get("/reconcile-check", authenticate, authorize("admin"), async (req: Req
 
     let orden: any = null;
     if (q) {
-      orden = await Orden.findOne({
-        $or: [{ orden_id: q }, { payment_id: q }, { external_reference: q }, { _id: q as any }],
-      }).lean();
+      const or: any[] = [{ orden_id: q }, { payment_id: q }, { external_reference: q }];
+      // Evitar CastError cuando q NO es un ObjectId (ej. "ORD-123")
+      if (mongoose.Types.ObjectId.isValid(q)) {
+        or.push({ _id: new mongoose.Types.ObjectId(q) });
+      }
+      orden = await Orden.findOne({ $or: or }).lean();
     } else if (ext) {
       orden = await Orden.findOne({ external_reference: ext }).lean();
     }
