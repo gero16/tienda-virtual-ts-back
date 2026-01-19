@@ -402,6 +402,7 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
     
     // 🔍 VERIFICAR QUÉ MONEDA DEVOLVIÓ MERCADOPAGO
     const itemsEnRespuesta = response.body.items || [];
+    const currencyReal = (itemsEnRespuesta[0]?.currency_id || targetCurrency || "").toString().toUpperCase();
     if (itemsEnRespuesta.length > 0) {
       const monedaReal = itemsEnRespuesta[0].currency_id;
       console.log(colors.cyan(`   💱 Moneda REAL en respuesta de MP: ${monedaReal}`));
@@ -449,9 +450,9 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
           descuento_total: descuentoCupon
         } : undefined,
         total: totalFinal, // Total después del descuento
-        currency: targetCurrency,
+        currency: currencyReal,
         status: 'pending',
-        notes: `[PREFERENCIA CREADA] Cliente redirigido a Mercado Pago. Pref ID: ${response.body.id} | Esta orden se actualizará cuando el cliente complete el pago. External Ref: ${external_reference}`
+        notes: `[PREFERENCIA CREADA] Cliente redirigido a Mercado Pago. Pref ID: ${response.body.id} | Esta orden se actualizará cuando el cliente complete el pago. External Ref: ${external_reference} | currency_requested=${targetCurrency} | currency_real=${currencyReal}`
       });
       console.log(colors.green('💾 Orden pending registrada (preference_created)'));
 
@@ -460,15 +461,19 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
         const cuponInfo = cuponValidado ? ` (con cupón ${cuponValidado.codigo})` : '';
         // Formateo de monto a 2 decimales para el mensaje:
         const montoFmt = (Math.round((totalFinal + Number.EPSILON) * 100) / 100).toFixed(2);
+        const mismatchInfo =
+          currencyReal && targetCurrency && currencyReal !== targetCurrency
+            ? ` (solicitado ${targetCurrency}, MP creó ${currencyReal})`
+            : '';
         await AdminNotification.create({
           type: 'order',
           status: 'unread',
-          message: `[PREFERENCIA CREADA] Cliente redirigido a Mercado Pago - ${targetCurrency} ${montoFmt}${cuponInfo} | ⏳ Esperando pago real`,
+          message: `[PREFERENCIA CREADA] Cliente redirigido a Mercado Pago - ${currencyReal} ${montoFmt}${cuponInfo}${mismatchInfo} | ⏳ Esperando pago real`,
           order_id: ordenPending.orden_id,
           payment_id: response.body.id?.toString?.(),
           customer_email: customerData?.email || undefined,
           total: totalFinal,
-          currency: targetCurrency
+          currency: currencyReal
         });
       } catch (nErr) {
         console.log(colors.yellow('⚠️ No se pudo crear notificación admin (pending)'), nErr);
@@ -483,7 +488,7 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
           status: 'unread',
           message: `Error registrando orden pending: ${errorMessage}`,
           total: totalFinal,
-          currency: targetCurrency
+          currency: currencyReal
         });
       } catch {}
     }
@@ -494,8 +499,9 @@ router.post("/create-preference-checkout-pro", async (req: Request, res: Respons
       sandbox_init_point: response.body.sandbox_init_point,
       external_reference: external_reference,
       total: totalFinal,
-      currency: targetCurrency,
-      currency_real: itemsEnRespuesta[0]?.currency_id || targetCurrency, // Moneda real que devolvió MP
+      currency: targetCurrency, // compat: "moneda solicitada"
+      currency_real: currencyReal, // Moneda real que devolvió MP
+      currency_requested: targetCurrency, // más explícito para el frontend
       items: itemsValidados.map(item => ({
         id: item.id,
         title: item.title,

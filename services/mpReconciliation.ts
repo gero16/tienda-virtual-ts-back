@@ -506,7 +506,10 @@ export function startMercadoPagoReconciliation() {
           if (createNotifications) {
             try {
               const amount = Number(fresh.total ?? fresh.transaction_amount ?? mpPayment.transaction_amount ?? 0);
-              const curr = (mpPayment.currency_id || fresh.currency || "").toString();
+              const orderCurr = String(fresh.currency || "").toUpperCase();
+              const mpCurr = String(mpPayment.currency_id || "").toUpperCase();
+              const curr = (orderCurr || mpCurr || "").toString();
+              const mismatchNote = orderCurr && mpCurr && orderCurr !== mpCurr ? ` (MP: ${mpCurr})` : "";
               const msg =
                 buildAdminPaymentMessage({
                 status: mpStatus,
@@ -516,7 +519,7 @@ export function startMercadoPagoReconciliation() {
                 payment_method_id: mpPayment.payment_method_id,
                 payment_type_id: mpPayment.payment_type_id,
                 installments: mpPayment.installments,
-                }) + ` | ${(prevStatus || "pending")} → ${nextStatus}`;
+                }) + `${mismatchNote} | ${(prevStatus || "pending")} → ${nextStatus}`;
               await AdminNotification.create({
                 type: "order",
                 status: "unread",

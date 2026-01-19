@@ -572,7 +572,11 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
         descuento_cupon: descuentoCupon,
         cupon_aplicado: cuponInfo || undefined,
         total: paymentData.transaction_amount,
-        currency: paymentData.currency_id || 'UYU',
+        // Moneda: si la orden ya existía (por creación de preferencia) preservamos su moneda.
+        // Esto evita "pisarla" con una moneda distinta reportada por MP en el webhook.
+        currency: (String(ordenExistente?.currency || '').toUpperCase() ||
+          String(paymentData.currency_id || '').toUpperCase() ||
+          'UYU'),
         status: orderStatus,
         
         date_created: ordenExistente ? ordenExistente.date_created : new Date(),
@@ -683,7 +687,12 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
           const method = paymentData.payment_method_id ? String(paymentData.payment_method_id).toUpperCase() : (paymentData.payment_type_id || '')
           const amount = Number(paymentData.transaction_amount || 0)
           const amountFmt = formatMoney(amount)
-          const curr = paymentData.currency_id || ''
+
+          const orderCurr = String(ordenExistente?.currency || '').toUpperCase();
+          const mpCurr = String(paymentData.currency_id || '').toUpperCase();
+          const curr = orderCurr || mpCurr || '';
+          const currencyMismatch = Boolean(orderCurr && mpCurr && orderCurr !== mpCurr);
+          const mismatchNote = currencyMismatch ? ` (MP: ${mpCurr})` : '';
           const detail = String(paymentData.status_detail || '')
           const detailMap: Record<string,string> = {
             // Estados de aprobación
@@ -720,12 +729,12 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
           const friendlyDetail = detailMap[detail] || detail
           
           // Construir mensaje base
-          let message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}`
+          let message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${friendlyDetail ? ` (${friendlyDetail})` : ''}${mismatchNote}`
           
           // Manejar estados especiales con información adicional
           if (status === 'in_process') {
             console.log(colors.cyan(`   🔄 PAGO EN PROCESO - Mercado Pago está analizando el pago`));
-            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''} | 🔄 Análisis en curso - Esperar confirmación`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${mismatchNote} | 🔄 Análisis en curso - Esperar confirmación`;
           }
           
           if (status === 'in_mediation') {
@@ -734,7 +743,7 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
             
             // Agregar información útil al mensaje de la notificación
             const payerEmail = paymentData.payer?.email || metadata.customer_email || 'Cliente';
-            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''} | ⚠️ Disputa iniciada - Revisar en panel MP`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${mismatchNote} | ⚠️ Disputa iniciada - Revisar en panel MP`;
             
             // Si hay información adicional sobre la disputa, agregarla
             if (paymentData.dispute) {
@@ -747,24 +756,24 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
           
           if (status === 'charged_back') {
             console.log(colors.red(`   ❌ CHARGEBACK - El banco revirtió el pago`));
-            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''} | ❌ Pago revertido por banco`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${mismatchNote} | ❌ Pago revertido por banco`;
           }
           
           if (status === 'refunded') {
             const refundAmount = paymentData.transaction_amount || amount;
             console.log(colors.green(`   ✅ REEMBOLSO COMPLETADO - ${curr} ${refundAmount}`));
-            message = `${friendly} - ${curr} ${formatMoney(refundAmount)}${method ? ` - método ${method}` : ''} | ✅ Reembolso completado`;
+            message = `${friendly} - ${curr} ${formatMoney(refundAmount)}${method ? ` - método ${method}` : ''}${mismatchNote} | ✅ Reembolso completado`;
           }
           
           if (status === 'partially_refunded') {
             const refundAmount = paymentData.transaction_amount || amount;
             console.log(colors.yellow(`   ⚠️ REEMBOLSO PARCIAL - ${curr} ${refundAmount}`));
-            message = `${friendly} - ${curr} ${formatMoney(refundAmount)}${method ? ` - método ${method}` : ''} | ⚠️ Reembolso parcial realizado`;
+            message = `${friendly} - ${curr} ${formatMoney(refundAmount)}${method ? ` - método ${method}` : ''}${mismatchNote} | ⚠️ Reembolso parcial realizado`;
           }
           
           if (status === 'authorized') {
             console.log(colors.cyan(`   🔐 PAGO AUTORIZADO - Requiere captura posterior`));
-            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''} | 🔐 Autorizado - Requiere captura`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${mismatchNote} | 🔐 Autorizado - Requiere captura`;
           }
           
           if (status === 'pending') {
@@ -783,7 +792,7 @@ router.all("/mercadopago", async (req: Request, res: Response) => {
               ? ` - ${paymentData.installments} cuotas` 
               : '';
             
-            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${installmentsInfo} | ⏳ ${pendingType}`;
+            message = `${friendly} - ${curr} ${amountFmt}${method ? ` - método ${method}` : ''}${installmentsInfo}${mismatchNote} | ⏳ ${pendingType}`;
           }
 
           await AdminNotification.create({
